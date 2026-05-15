@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Assets/LogoUpdateManager.png" alt="Logo" width="300"/>
+  <img src="https://raw.githubusercontent.com/finbom/HomeAssistantAdvancedUpdateManager/main/Assets/LogoUpdateManager.png" alt="Logo" width="300"/>
 </p>
 
 # Home Assistant Advanced Update Manager
