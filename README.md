@@ -1,6 +1,10 @@
+<p align="center">
+  <img src="Assets/LogoUpdateManager.png" alt="Logo" width="300"/>
+</p>
+
 # Home Assistant Advanced Update Manager
 
-A HACS custom integration that adds a dedicated **Update Manager** panel to your Home Assistant sidebar — with enriched information that the built-in update UI doesn't show.
+A HACS custom integration that adds a dedicated **Update Manager** panel to your Home Assistant sidebar — with enriched information that the built-in update UI doesn't show..
 
 ## Features
 
