@@ -5,6 +5,7 @@ import logging
 import os
 
 from homeassistant.components.panel_custom import async_register_panel
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
 
@@ -24,7 +25,12 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up Advanced Update Manager."""
+    hass.data.setdefault(DOMAIN, {})
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Advanced Update Manager from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
     storage = UpdateDateStorage(hass)
@@ -56,4 +62,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     await coordinator.async_refresh()
 
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
+    hass.data[DOMAIN].clear()
     return True

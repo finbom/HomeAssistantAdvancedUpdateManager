@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Advanced Update Manager",
+        "description": "Click Submit to add the Update Manager panel to your Home Assistant sidebar."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Already configured. Only one instance is allowed."
+    }
+  }
+}
