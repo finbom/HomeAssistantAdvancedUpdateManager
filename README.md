@@ -20,24 +20,19 @@ A HACS custom integration that adds a dedicated **Update Manager** panel to your
 1. Open HACS in your Home Assistant
 2. Go to **Integrations** → click the three-dot menu → **Custom repositories**
 3. Add `https://github.com/finbom/HomeAssistantAdvancedUpdateManager` with category **Integration**
-4. Install **Advanced Update Manager**
-5. Restart Home Assistant
-6. A new **Update Manager** entry appears in the sidebar
+4. Click **Add** → search for "Advanced Update Manager" and install it
+5. Add the following to your `configuration.yaml`:
+   ```yaml
+   advanced_update_manager:
+   ```
+6. Restart Home Assistant
+7. A new **Update Manager** entry appears in the sidebar
 
 ## Manual installation
 
 1. Copy `custom_components/advanced_update_manager` into your HA config's `custom_components/` directory
-2. Restart Home Assistant
-
-## Configuration
-
-Add to `configuration.yaml`:
-
-```yaml
-advanced_update_manager:
-```
-
-No additional configuration is required. Optionally, a GitHub token can be added in a future version to increase the API rate limit for installations with many HACS components.
+2. Add `advanced_update_manager:` to your `configuration.yaml`
+3. Restart Home Assistant
 
 ## How it works
 
