@@ -1,0 +1,12 @@
+{
+  "domain": "advanced_update_manager",
+  "name": "Advanced Update Manager",
+  "version": "0.1.0",
+  "documentation": "https://github.com/finbom/HomeAssistantAdvancedUpdateManager",
+  "issue_tracker": "https://github.com/finbom/HomeAssistantAdvancedUpdateManager/issues",
+  "dependencies": ["panel_custom"],
+  "codeowners": ["@finbom"],
+  "requirements": [],
+  "iot_class": "local_polling",
+  "config_flow": false
+}
