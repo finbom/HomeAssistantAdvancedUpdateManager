@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.panel_custom import async_register_panel
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -41,11 +42,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN]["storage"] = storage
 
     frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
-    hass.http.register_static_path(
-        f"/{DOMAIN}_panel",
-        frontend_dir,
-        cache_headers=False,
-    )
+    await hass.http.async_register_static_paths([
+        StaticPathConfig(f"/{DOMAIN}_panel", frontend_dir, cache_headers=False),
+    ])
 
     await async_register_panel(
         hass,
