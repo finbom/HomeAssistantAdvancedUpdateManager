@@ -54,7 +54,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         sidebar_icon=PANEL_ICON,
         js_url=f"/{DOMAIN}_panel/{PANEL_JS}",
         require_admin=False,
-        trust_external_script=False,
     )
 
     websocket_api.async_setup(hass)

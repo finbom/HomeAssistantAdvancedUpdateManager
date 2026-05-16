@@ -1,7 +1,7 @@
 {
   "domain": "advanced_update_manager",
   "name": "Advanced Update Manager",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "documentation": "https://github.com/finbom/HomeAssistantAdvancedUpdateManager",
   "issue_tracker": "https://github.com/finbom/HomeAssistantAdvancedUpdateManager/issues",
   "dependencies": ["panel_custom"],
