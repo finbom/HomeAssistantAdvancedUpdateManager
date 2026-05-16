@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 
+from homeassistant.components.frontend import async_remove_panel
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.panel_custom import async_register_panel
 from homeassistant.config_entries import ConfigEntry
@@ -48,16 +49,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ])
 
     show_in_sidebar = entry.options.get(CONF_SHOW_IN_SIDEBAR, True)
-    if show_in_sidebar:
-        await async_register_panel(
-            hass,
-            frontend_url_path=PANEL_URL_PATH,
-            webcomponent_name=PANEL_COMPONENT,
-            sidebar_title=PANEL_TITLE,
-            sidebar_icon=PANEL_ICON,
-            js_url=f"/{DOMAIN}_panel/{PANEL_JS}",
-            require_admin=False,
-        )
+    await async_register_panel(
+        hass,
+        frontend_url_path=PANEL_URL_PATH,
+        webcomponent_name=PANEL_COMPONENT,
+        sidebar_title=PANEL_TITLE if show_in_sidebar else None,
+        sidebar_icon=PANEL_ICON if show_in_sidebar else None,
+        js_url=f"/{DOMAIN}_panel/{PANEL_JS}",
+        require_admin=False,
+    )
 
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
 
@@ -74,5 +74,6 @@ async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    async_remove_panel(hass, PANEL_URL_PATH)
     hass.data[DOMAIN].clear()
     return True
