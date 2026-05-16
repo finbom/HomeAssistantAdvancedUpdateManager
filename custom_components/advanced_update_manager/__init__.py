@@ -43,10 +43,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN]["coordinator"] = coordinator
     hass.data[DOMAIN]["storage"] = storage
 
-    frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
-    await hass.http.async_register_static_paths([
-        StaticPathConfig(f"/{DOMAIN}_panel", frontend_dir, cache_headers=False),
-    ])
+    if not hass.data[DOMAIN].get("static_paths_registered"):
+        frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
+        await hass.http.async_register_static_paths([
+            StaticPathConfig(f"/{DOMAIN}_panel", frontend_dir, cache_headers=False),
+        ])
+        hass.data[DOMAIN]["static_paths_registered"] = True
 
     show_in_sidebar = entry.options.get(CONF_SHOW_IN_SIDEBAR, True)
     await async_register_panel(
@@ -75,5 +77,10 @@ async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     async_remove_panel(hass, PANEL_URL_PATH)
+    # Keep static_paths_registered flag — static paths survive HA process lifetime
+    # and cannot be re-registered after a config entry reload.
+    static_flag = hass.data[DOMAIN].get("static_paths_registered")
     hass.data[DOMAIN].clear()
+    if static_flag:
+        hass.data[DOMAIN]["static_paths_registered"] = True
     return True
