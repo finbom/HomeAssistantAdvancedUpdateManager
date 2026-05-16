@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
+    CONF_SHOW_IN_SIDEBAR,
     DOMAIN,
     PANEL_COMPONENT,
     PANEL_ICON,
@@ -46,21 +47,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         StaticPathConfig(f"/{DOMAIN}_panel", frontend_dir, cache_headers=False),
     ])
 
-    await async_register_panel(
-        hass,
-        frontend_url_path=PANEL_URL_PATH,
-        webcomponent_name=PANEL_COMPONENT,
-        sidebar_title=PANEL_TITLE,
-        sidebar_icon=PANEL_ICON,
-        js_url=f"/{DOMAIN}_panel/{PANEL_JS}",
-        require_admin=False,
-    )
+    show_in_sidebar = entry.options.get(CONF_SHOW_IN_SIDEBAR, True)
+    if show_in_sidebar:
+        await async_register_panel(
+            hass,
+            frontend_url_path=PANEL_URL_PATH,
+            webcomponent_name=PANEL_COMPONENT,
+            sidebar_title=PANEL_TITLE,
+            sidebar_icon=PANEL_ICON,
+            js_url=f"/{DOMAIN}_panel/{PANEL_JS}",
+            require_admin=False,
+        )
+
+    entry.async_on_unload(entry.add_update_listener(_async_update_options))
 
     websocket_api.async_setup(hass)
 
     await coordinator.async_refresh()
 
     return True
+
+
+async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

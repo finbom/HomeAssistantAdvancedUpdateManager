@@ -92,6 +92,11 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     // State change subscription will update the list
   }
 
+  _navigateToHaUpdates() {
+    history.pushState(null, "", "/update");
+    window.dispatchEvent(new Event("location-changed"));
+  }
+
   async _skip(entityId) {
     try {
       await this._hass.connection.sendMessagePromise({
@@ -202,8 +207,11 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         :host { display: block; padding: 16px; font-family: var(--paper-font-body1_-_font-family, sans-serif); }
         .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
         .header h1 { margin: 0; font-size: 1.5rem; font-weight: 500; color: var(--primary-text-color); }
+        .header-actions { display: flex; gap: 8px; align-items: center; }
         .refresh-btn { background: none; border: 1px solid var(--primary-color, #03a9f4); color: var(--primary-color, #03a9f4); border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 0.875rem; }
         .refresh-btn:hover { background: var(--primary-color, #03a9f4); color: white; }
+        .ha-update-btn { background: none; border: 1px solid var(--divider-color, #e0e0e0); color: var(--secondary-text-color); border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 0.875rem; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+        .ha-update-btn:hover { background: var(--secondary-background-color, #f5f5f5); }
         .loading, .error { text-align: center; padding: 48px; color: var(--secondary-text-color); }
         .error { color: var(--error-color, #db4437); }
         .group { margin-bottom: 24px; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); background: var(--card-background-color, white); }
@@ -241,7 +249,10 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       </style>
       <div class="header">
         <h1>Update Manager</h1>
-        <button class="refresh-btn" onclick="this.getRootNode().host._fetchUpdates()">Uppdatera lista</button>
+        <div class="header-actions">
+          <button class="ha-update-btn" onclick="this.getRootNode().host._navigateToHaUpdates()">HA Updates ↗</button>
+          <button class="refresh-btn" onclick="this.getRootNode().host._fetchUpdates()">Uppdatera lista</button>
+        </div>
       </div>
       ${this._loading
         ? `<div class="loading">Hämtar uppdateringar…</div>`
