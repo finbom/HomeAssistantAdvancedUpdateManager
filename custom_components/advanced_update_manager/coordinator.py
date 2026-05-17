@@ -21,7 +21,7 @@ from .const import (
     UPDATE_TYPE_OTHER,
 )
 
-from .github_client import extract_owner_repo, fetch_pypi_release_date, fetch_release_date
+from .github_client import extract_owner_repo, fetch_pypi_release_date, fetch_release_date, fetch_supervisor_addon_info
 from .storage import UpdateDateStorage
 
 # GitHub release URL templates for entities that don't expose a GitHub release_url
@@ -87,13 +87,25 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                     release_date = await fetch_pypi_release_date(
                         session, "homeassistant", new_version
                     )
-                elif "github.com" in release_url:
-                    info = extract_owner_repo(release_url)
-                    if info:
-                        owner, repo = info
-                        release_date = await fetch_release_date(
-                            session, owner, repo, new_version, self.github_token
-                        )
+                else:
+                    # For Supervisor addons, the release_url attribute may point to a
+                    # generic monorepo URL (e.g. home-assistant/addons) that has no
+                    # per-addon releases. Prefer the addon's own GitHub repo from the
+                    # Supervisor API instead.
+                    github_url = release_url
+                    if update_type == UPDATE_TYPE_ADDON and entry and entry.unique_id:
+                        addon_info = await fetch_supervisor_addon_info(session, entry.unique_id)
+                        supervisor_url = (addon_info or {}).get("url", "")
+                        if supervisor_url and "github.com" in supervisor_url:
+                            github_url = supervisor_url
+
+                    if "github.com" in github_url:
+                        info = extract_owner_repo(github_url)
+                        if info:
+                            owner, repo = info
+                            release_date = await fetch_release_date(
+                                session, owner, repo, new_version, self.github_token
+                            )
                 if release_date:
                     await self.storage.async_set(entity_id, new_version, release_date)
 

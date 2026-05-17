@@ -4,6 +4,7 @@ from __future__ import annotations
 import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
 
@@ -12,6 +13,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_updates)
     websocket_api.async_register_command(hass, ws_install_update)
     websocket_api.async_register_command(hass, ws_skip_update)
+    websocket_api.async_register_command(hass, ws_get_skipped_updates)
     websocket_api.async_register_command(hass, ws_get_restart_info)
 
 
@@ -57,6 +59,40 @@ async def ws_skip_update(hass: HomeAssistant, connection, msg: dict) -> None:
         blocking=False,
     )
     connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/get_skipped_updates",
+})
+@websocket_api.async_response
+async def ws_get_skipped_updates(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Return update entities whose current latest version has been skipped."""
+    registry = er.async_get(hass)
+    skipped = []
+
+    for state in hass.states.async_all("update"):
+        attrs = state.attributes
+        skipped_version = attrs.get("skipped_version")
+        if not skipped_version:
+            continue
+
+        entity_id = state.entity_id
+        entry = registry.async_get(entity_id)
+        title = (
+            attrs.get("title")
+            or (entry and (entry.name or entry.original_name))
+            or entity_id.removeprefix("update.")
+        )
+
+        skipped.append({
+            "entity_id": entity_id,
+            "title": title,
+            "installed_version": attrs.get("installed_version") or "",
+            "skipped_version": skipped_version,
+            "release_url": attrs.get("release_url") or "",
+        })
+
+    connection.send_result(msg["id"], {"updates": skipped})
 
 
 @websocket_api.websocket_command({

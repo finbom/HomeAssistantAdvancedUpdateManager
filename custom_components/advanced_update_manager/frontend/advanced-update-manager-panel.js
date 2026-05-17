@@ -12,10 +12,12 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     this._error = null;
     this._unsubscribe = null;
     this._initialized = false;
-    this._confirm = null;  // { type: "install", entityId, backup, title } | { type: "restart" }
+    this._confirm = null;  // { type: "install"|"restart"|"skip", entityId?, backup?, title? }
     this._installing = new Set();
     this._t = {};
     this._restartRequired = false;
+    this._showSkipped = false;
+    this._skippedUpdates = [];
   }
 
   set hass(hass) {
@@ -110,12 +112,24 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         this._fetchRestartInfo();
       }
     }, "state_changed");
+
+    // After HA restarts, the persistent_notification disappears silently (no
+    // state_changed fires on reconnect). Re-fetch so the banner clears on mobile.
+    this._onConnectionReady = () => {
+      this._fetchRestartInfo();
+      this._fetchUpdates();
+    };
+    this._hass.connection.addEventListener("ready", this._onConnectionReady);
   }
 
   disconnectedCallback() {
     if (this._unsubscribe) {
       this._unsubscribe();
       this._unsubscribe = null;
+    }
+    if (this._onConnectionReady) {
+      this._hass.connection.removeEventListener("ready", this._onConnectionReady);
+      this._onConnectionReady = null;
     }
   }
 
@@ -177,16 +191,62 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     window.dispatchEvent(new Event("location-changed"));
   }
 
-  async _skip(entityId) {
+  _requestSkip(entityId) {
+    const update = this._updates.find((u) => u.entity_id === entityId);
+    this._confirm = { type: "skip", entityId, title: update ? update.title : entityId };
+    this._render();
+  }
+
+  async _doSkip() {
+    const { entityId } = this._confirm;
+    this._confirm = null;
+    this._render();
     try {
       await this._hass.connection.sendMessagePromise({
         type: "advanced_update_manager/skip_update",
         entity_id: entityId,
       });
       this._updates = this._updates.filter((u) => u.entity_id !== entityId);
+      if (this._showSkipped) await this._fetchSkippedUpdates();
       this._render();
     } catch (e) {
       console.error("[AdvancedUpdateManager] skip failed", e);
+    }
+  }
+
+  async _fetchSkippedUpdates() {
+    try {
+      const result = await this._hass.connection.sendMessagePromise({
+        type: "advanced_update_manager/get_skipped_updates",
+      });
+      this._skippedUpdates = result.updates || [];
+    } catch (e) {
+      console.error("[AdvancedUpdateManager] skipped fetch failed", e);
+      this._skippedUpdates = [];
+    }
+  }
+
+  async _toggleSkipped() {
+    this._showSkipped = !this._showSkipped;
+    if (this._showSkipped) {
+      await this._fetchSkippedUpdates();
+    }
+    this._render();
+  }
+
+  async _unskip(entityId) {
+    try {
+      await this._hass.connection.sendMessagePromise({
+        type: "call_service",
+        domain: "update",
+        service: "clear_skipped",
+        service_data: { entity_id: entityId },
+      });
+      this._skippedUpdates = this._skippedUpdates.filter((u) => u.entity_id !== entityId);
+      this._render();
+      // state_changed handler fires when entity becomes "on" → _fetchUpdates() auto-runs
+    } catch (e) {
+      console.error("[AdvancedUpdateManager] unskip failed", e);
     }
   }
 
@@ -247,7 +307,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
             : `
               <button class="btn btn-update" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', false)" title="${this._tr("btn_update_title", "Install update")}">${this._tr("btn_update", "Update")}</button>
               <button class="btn btn-backup" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', true)" title="${this._tr("btn_backup_title", "Back up and install")}">${this._tr("btn_backup_update", "Backup + Update")}</button>
-              <button class="btn btn-skip" onclick="this.getRootNode().host._skip('${this._escHtml(u.entity_id)}')" title="${this._tr("btn_skip_title", "Skip this version")}">${this._tr("btn_skip", "Skip")}</button>
+              <button class="btn btn-skip" onclick="this.getRootNode().host._requestSkip('${this._escHtml(u.entity_id)}')" title="${this._tr("btn_skip_title", "Skip this version")}">${this._tr("btn_skip", "Skip")}</button>
             `}
         </td>
       </tr>`;
@@ -297,8 +357,62 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     return html;
   }
 
+  _renderSkippedSection() {
+    if (!this._showSkipped) return "";
+    if (this._skippedUpdates.length === 0) {
+      return `<div class="group" style="margin-top:8px">
+        <div class="group-header" style="border-left:4px solid var(--secondary-text-color,#9e9e9e)">
+          <span class="group-badge" style="background:var(--secondary-text-color,#9e9e9e)">${this._tr("skipped_label", "Skipped")}</span>
+        </div>
+        <div style="padding:24px;text-align:center;color:var(--secondary-text-color)">${this._tr("skipped_empty", "No skipped updates.")}</div>
+      </div>`;
+    }
+    const rows = this._skippedUpdates.map((u) => `
+      <tr>
+        <td class="name-cell"><span class="title">${this._escHtml(u.title)}</span></td>
+        <td class="version-cell"><span class="version-to">${this._escHtml(u.skipped_version)}</span></td>
+        <td class="action-cell">
+          ${u.release_url ? `<a href="${u.release_url}" target="_blank" rel="noopener" class="btn btn-skip" style="text-decoration:none;margin-right:4px">${this._tr("btn_release_notes", "Notes ↗")}</a>` : ""}
+          <button class="btn btn-update" onclick="this.getRootNode().host._unskip('${this._escHtml(u.entity_id)}')">${this._tr("btn_unskip", "Restore")}</button>
+        </td>
+      </tr>`).join("");
+    const count = this._skippedUpdates.length;
+    const countLabel = count === 1
+      ? `1 ${this._tr("update_count_one", "update")}`
+      : `${count} ${this._tr("update_count_other", "updates")}`;
+    return `
+      <div class="group" style="margin-top:8px">
+        <div class="group-header" style="border-left:4px solid var(--secondary-text-color,#9e9e9e)">
+          <span class="group-badge" style="background:var(--secondary-text-color,#9e9e9e)">${this._tr("skipped_label", "Skipped")}</span>
+          <span class="group-count">${countLabel}</span>
+        </div>
+        <table class="update-table">
+          <thead><tr>
+            <th>${this._tr("col_name", "Name")}</th>
+            <th>${this._tr("col_version", "Skipped version")}</th>
+            <th>${this._tr("col_action", "Action")}</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }
+
   _renderConfirmModal() {
     if (!this._confirm) return "";
+
+    if (this._confirm.type === "skip") {
+      return `
+        <div class="confirm-overlay">
+          <div class="confirm-dialog">
+            <p class="confirm-title">${this._tr("confirm_skip_title", "Skip this update?")}</p>
+            <p class="confirm-body">${this._tr("confirm_skip_body", "Skip")} <strong>${this._escHtml(this._confirm.title)}</strong>? ${this._tr("confirm_skip_hint", "You can restore it later from the skipped list.")}</p>
+            <div class="confirm-actions">
+              <button class="btn btn-skip" onclick="this.getRootNode().host._cancelConfirm()">${this._tr("btn_cancel", "Cancel")}</button>
+              <button class="btn btn-skip-confirm" onclick="this.getRootNode().host._doSkip()">${this._tr("btn_skip", "Skip")}</button>
+            </div>
+          </div>
+        </div>`;
+    }
 
     if (this._confirm.type === "restart") {
       return `
@@ -353,6 +467,11 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         .btn-restart:hover { background: rgba(255,255,255,0.85); }
         .btn-restart-confirm { background: var(--warning-color, #ff9800); color: white; }
         .btn-restart-confirm:hover { filter: brightness(1.1); }
+        .btn-skip-confirm { background: var(--secondary-text-color, #757575); color: white; }
+        .btn-skip-confirm:hover { filter: brightness(1.1); }
+        .toggle-skipped-btn { background: none; border: 1px solid var(--divider-color, #e0e0e0); color: var(--secondary-text-color); border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 0.875rem; }
+        .toggle-skipped-btn:hover { background: var(--secondary-background-color, #f5f5f5); }
+        .toggle-skipped-btn.active { border-color: var(--primary-color, #03a9f4); color: var(--primary-color, #03a9f4); }
         .loading, .error { text-align: center; padding: 48px; color: var(--secondary-text-color); }
         .error { color: var(--error-color, #db4437); }
         .group { margin-bottom: 24px; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); background: var(--card-background-color, white); }
@@ -409,6 +528,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         <h1>${this._tr("panel_title", "Update Manager")}</h1>
         <div class="header-actions">
           <button class="ha-update-btn" onclick="this.getRootNode().host._navigateToHaUpdates()">${this._tr("ha_updates_btn", "HA Updates ↗")}</button>
+          <button class="toggle-skipped-btn${this._showSkipped ? " active" : ""}" onclick="this.getRootNode().host._toggleSkipped()">${this._showSkipped ? this._tr("hide_skipped_btn", "Hide skipped") : this._tr("show_skipped_btn", "Show skipped")}</button>
           <button class="refresh-btn" onclick="this.getRootNode().host._fetchUpdates()">${this._tr("refresh_btn", "Refresh list")}</button>
         </div>
       </div>
@@ -418,6 +538,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         : this._error
           ? `<div class="error">${this._error}</div>`
           : this._renderGroups()}
+      ${this._renderSkippedSection()}
       ${this._renderConfirmModal()}
     `;
   }

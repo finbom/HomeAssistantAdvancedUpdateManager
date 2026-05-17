@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 
 import aiohttp
@@ -47,6 +48,26 @@ async def fetch_release_date(
         except Exception as exc:
             _LOGGER.debug("GitHub request failed for %s/%s@%s: %s", owner, repo, tag, exc)
 
+    return None
+
+
+async def fetch_supervisor_addon_info(
+    session: aiohttp.ClientSession, slug: str
+) -> dict | None:
+    """Return addon metadata dict from the Supervisor REST API, or None."""
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return None
+    try:
+        async with session.get(
+            f"http://supervisor/addons/{slug}/info",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status == 200:
+                return (await resp.json()).get("data") or {}
+    except Exception as exc:
+        _LOGGER.debug("Supervisor addon info failed for %s: %s", slug, exc)
     return None
 
 
