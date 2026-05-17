@@ -20,8 +20,15 @@ from .const import (
     UPDATE_TYPE_HAOS,
     UPDATE_TYPE_OTHER,
 )
+
 from .github_client import extract_owner_repo, fetch_release_date
 from .storage import UpdateDateStorage
+
+# GitHub release URL templates for entities that don't expose a GitHub release_url
+_GITHUB_URL_TEMPLATES = {
+    CORE_ENTITY_ID: "https://github.com/home-assistant/core/releases/tag/{version}",
+    HAOS_ENTITY_ID: "https://github.com/home-assistant/operating-system/releases/tag/{version}",
+}
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,9 +64,13 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
 
             entity_id = state.entity_id
             attrs = state.attributes
-            new_version = attrs.get("latest_version", "")
-            current_version = attrs.get("installed_version", "")
+            new_version = attrs.get("latest_version") or ""
+            current_version = attrs.get("installed_version") or ""
             release_url = attrs.get("release_url") or ""
+            if not release_url or "github.com" not in release_url:
+                template = _GITHUB_URL_TEMPLATES.get(entity_id)
+                if template and new_version:
+                    release_url = template.format(version=new_version)
             title = attrs.get("title") or entity_id
 
             update_type = self._classify(state, registry)

@@ -12,6 +12,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     this._error = null;
     this._unsubscribe = null;
     this._initialized = false;
+    this._confirm = null;
   }
 
   set hass(hass) {
@@ -75,6 +76,23 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       this._unsubscribe();
       this._unsubscribe = null;
     }
+  }
+
+  _requestInstall(entityId, backup) {
+    const update = this._updates.find((u) => u.entity_id === entityId);
+    this._confirm = { entityId, backup, title: update ? update.title : entityId };
+    this._render();
+  }
+
+  _cancelConfirm() {
+    this._confirm = null;
+    this._render();
+  }
+
+  async _doInstall() {
+    const { entityId, backup } = this._confirm;
+    this._confirm = null;
+    await this._install(entityId, backup);
   }
 
   async _install(entityId, backup) {
@@ -149,8 +167,8 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           ${inProgress
             ? `<span class="badge in-progress-badge">Installerar…</span>`
             : `
-              <button class="btn btn-update" data-entity="${this._escHtml(u.entity_id)}" onclick="this.getRootNode().host._install('${this._escHtml(u.entity_id)}', false)" title="Installera uppdatering">Uppdatera</button>
-              <button class="btn btn-backup" data-entity="${this._escHtml(u.entity_id)}" onclick="this.getRootNode().host._install('${this._escHtml(u.entity_id)}', true)" title="Säkerhetskopiera och installera">Backup + Uppdatera</button>
+              <button class="btn btn-update" data-entity="${this._escHtml(u.entity_id)}" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', false)" title="Installera uppdatering">Uppdatera</button>
+              <button class="btn btn-backup" data-entity="${this._escHtml(u.entity_id)}" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', true)" title="Säkerhetskopiera och installera">Backup + Uppdatera</button>
               <button class="btn btn-skip" onclick="this.getRootNode().host._skip('${this._escHtml(u.entity_id)}')" title="Hoppa över denna version">Hoppa över</button>
             `}
         </td>
@@ -195,6 +213,24 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         </div>`;
     }
     return html;
+  }
+
+  _renderConfirmModal() {
+    if (!this._confirm) return "";
+    const { title, backup } = this._confirm;
+    const action = backup ? "Backup + Uppdatera" : "Uppdatera";
+    const verb = backup ? "säkerhetskopiera och uppdatera" : "uppdatera";
+    return `
+      <div class="confirm-overlay">
+        <div class="confirm-dialog">
+          <p class="confirm-title">Bekräfta uppdatering</p>
+          <p class="confirm-body">Vill du ${verb} <strong>${this._escHtml(title)}</strong>?</p>
+          <div class="confirm-actions">
+            <button class="btn btn-skip" onclick="this.getRootNode().host._cancelConfirm()">Avbryt</button>
+            <button class="btn ${backup ? "btn-backup" : "btn-update"}" onclick="this.getRootNode().host._doInstall()">${action}</button>
+          </div>
+        </div>
+      </div>`;
   }
 
   _escHtml(str) {
@@ -246,6 +282,11 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           .btn-backup, .btn-skip { display: none; }
           .update-table th:nth-child(3), .update-table td:nth-child(3) { display: none; }
         }
+        .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+        .confirm-dialog { background: var(--card-background-color, white); border-radius: 8px; padding: 24px; max-width: 400px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
+        .confirm-title { margin: 0 0 12px; font-size: 1.1rem; font-weight: 500; color: var(--primary-text-color); }
+        .confirm-body { margin: 0 0 20px; color: var(--secondary-text-color); line-height: 1.5; }
+        .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
       </style>
       <div class="header">
         <h1>Update Manager</h1>
@@ -259,6 +300,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         : this._error
           ? `<div class="error">${this._error}</div>`
           : this._renderGroups()}
+      ${this._renderConfirmModal()}
     `;
   }
 }
