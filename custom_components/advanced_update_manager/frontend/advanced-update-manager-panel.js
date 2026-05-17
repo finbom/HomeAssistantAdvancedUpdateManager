@@ -136,6 +136,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   async _doInstall() {
     const { entityId, backup } = this._confirm;
     this._confirm = null;
+    this._render();
     await this._install(entityId, backup);
   }
 
