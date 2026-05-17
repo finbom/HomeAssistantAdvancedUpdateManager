@@ -12,8 +12,9 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     this._error = null;
     this._unsubscribe = null;
     this._initialized = false;
-    this._confirm = null;
+    this._confirm = null;  // { type: "install", entityId, backup, title } | { type: "restart" }
     this._t = {};
+    this._restartRequired = false;
   }
 
   set hass(hass) {
@@ -30,7 +31,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   async _init() {
     this._render();
     await this._loadTranslations();
-    await this._fetchUpdates();
+    await Promise.all([this._fetchUpdates(), this._fetchRestartInfo()]);
     this._subscribeStateChanges();
   }
 
@@ -72,24 +73,39 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     this._render();
   }
 
+  async _fetchRestartInfo() {
+    try {
+      const result = await this._hass.connection.sendMessagePromise({
+        type: "advanced_update_manager/get_restart_info",
+      });
+      this._restartRequired = result.restart_required || false;
+    } catch (e) {
+      console.error("[AdvancedUpdateManager] restart check failed", e);
+    }
+    this._render();
+  }
+
   _subscribeStateChanges() {
     this._unsubscribe = this._hass.connection.subscribeEvents((event) => {
       const entityId = event.data?.entity_id;
-      if (!entityId?.startsWith("update.")) return;
+      if (!entityId) return;
 
-      const oldState = event.data?.old_state?.state;
-      const newState = event.data?.new_state?.state;
+      if (entityId.startsWith("update.")) {
+        const oldState = event.data?.old_state?.state;
+        const newState = event.data?.new_state?.state;
 
-      if (oldState === "on" && newState !== "on") {
-        // Update installed — remove from list immediately
-        this._updates = this._updates.filter((u) => u.entity_id !== entityId);
-        this._render();
-      } else if (newState === "on" && oldState !== "on") {
-        // New update appeared — do a full refresh
-        this._fetchUpdates();
-      } else if (newState === "on" && oldState === "on") {
-        // in_progress state may have changed — refresh
-        this._fetchUpdates();
+        if (oldState === "on" && newState !== "on") {
+          // Update installed — remove from list immediately
+          this._updates = this._updates.filter((u) => u.entity_id !== entityId);
+          this._render();
+        } else if (newState === "on" && oldState !== "on") {
+          this._fetchUpdates();
+        } else if (newState === "on" && oldState === "on") {
+          this._fetchUpdates();
+        }
+      } else if (entityId.startsWith("persistent_notification.")) {
+        // A notification appeared or disappeared — re-check restart state
+        this._fetchRestartInfo();
       }
     }, "state_changed");
   }
@@ -103,7 +119,12 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
 
   _requestInstall(entityId, backup) {
     const update = this._updates.find((u) => u.entity_id === entityId);
-    this._confirm = { entityId, backup, title: update ? update.title : entityId };
+    this._confirm = { type: "install", entityId, backup, title: update ? update.title : entityId };
+    this._render();
+  }
+
+  _requestRestart() {
+    this._confirm = { type: "restart" };
     this._render();
   }
 
@@ -116,6 +137,21 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     const { entityId, backup } = this._confirm;
     this._confirm = null;
     await this._install(entityId, backup);
+  }
+
+  async _doRestart() {
+    this._confirm = null;
+    this._render();
+    try {
+      await this._hass.connection.sendMessagePromise({
+        type: "call_service",
+        domain: "homeassistant",
+        service: "restart",
+        service_data: {},
+      });
+    } catch (e) {
+      console.error("[AdvancedUpdateManager] restart failed", e);
+    }
   }
 
   async _install(entityId, backup) {
@@ -166,6 +202,19 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       groups[u.type].push(u);
     }
     return groups;
+  }
+
+  _renderRestartBanner() {
+    if (!this._restartRequired) return "";
+    const isAdmin = this._hass.user?.is_admin ?? false;
+    return `
+      <div class="restart-banner">
+        <span class="restart-icon">⚠</span>
+        <span class="restart-text">${this._tr("restart_banner", "Home Assistant needs to be restarted for recent changes to take effect.")}</span>
+        ${isAdmin
+          ? `<button class="btn btn-restart" onclick="this.getRootNode().host._requestRestart()">${this._tr("restart_btn", "Restart Home Assistant")}</button>`
+          : ""}
+      </div>`;
   }
 
   _renderUpdateRow(u) {
@@ -244,6 +293,21 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
 
   _renderConfirmModal() {
     if (!this._confirm) return "";
+
+    if (this._confirm.type === "restart") {
+      return `
+        <div class="confirm-overlay">
+          <div class="confirm-dialog">
+            <p class="confirm-title">${this._tr("confirm_restart_title", "Confirm restart")}</p>
+            <p class="confirm-body">${this._tr("confirm_restart_body", "Are you sure you want to restart Home Assistant? This will cause a brief outage.")}</p>
+            <div class="confirm-actions">
+              <button class="btn btn-skip" onclick="this.getRootNode().host._cancelConfirm()">${this._tr("btn_cancel", "Cancel")}</button>
+              <button class="btn btn-restart-confirm" onclick="this.getRootNode().host._doRestart()">${this._tr("btn_restart", "Restart")}</button>
+            </div>
+          </div>
+        </div>`;
+    }
+
     const { title, backup } = this._confirm;
     const bodyKey = backup ? "confirm_body_backup" : "confirm_body_update";
     const bodyDefault = backup ? "Do you want to back up and update" : "Do you want to update";
@@ -276,6 +340,13 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         .refresh-btn:hover { background: var(--primary-color, #03a9f4); color: white; }
         .ha-update-btn { background: none; border: 1px solid var(--divider-color, #e0e0e0); color: var(--secondary-text-color); border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 0.875rem; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
         .ha-update-btn:hover { background: var(--secondary-background-color, #f5f5f5); }
+        .restart-banner { display: flex; align-items: center; gap: 12px; background: var(--warning-color, #ff9800); color: white; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; }
+        .restart-icon { font-size: 1.25rem; flex-shrink: 0; }
+        .restart-text { flex: 1; font-size: 0.9rem; line-height: 1.4; }
+        .btn-restart { background: white; color: var(--warning-color, #ff9800); border: none; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 0.875rem; font-weight: 600; white-space: nowrap; flex-shrink: 0; }
+        .btn-restart:hover { background: rgba(255,255,255,0.85); }
+        .btn-restart-confirm { background: var(--warning-color, #ff9800); color: white; }
+        .btn-restart-confirm:hover { filter: brightness(1.1); }
         .loading, .error { text-align: center; padding: 48px; color: var(--secondary-text-color); }
         .error { color: var(--error-color, #db4437); }
         .group { margin-bottom: 24px; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); background: var(--card-background-color, white); }
@@ -309,6 +380,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         @media (max-width: 600px) {
           .btn-backup, .btn-skip { display: none; }
           .update-table th:nth-child(3), .update-table td:nth-child(3) { display: none; }
+          .restart-banner { flex-wrap: wrap; }
         }
         .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
         .confirm-dialog { background: var(--card-background-color, white); border-radius: 8px; padding: 24px; max-width: 400px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
@@ -323,6 +395,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           <button class="refresh-btn" onclick="this.getRootNode().host._fetchUpdates()">${this._tr("refresh_btn", "Refresh list")}</button>
         </div>
       </div>
+      ${this._renderRestartBanner()}
       ${this._loading
         ? `<div class="loading">${this._tr("loading", "Fetching updates…")}</div>`
         : this._error

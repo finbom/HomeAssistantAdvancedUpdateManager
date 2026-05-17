@@ -48,3 +48,23 @@ async def fetch_release_date(
             _LOGGER.debug("GitHub request failed for %s/%s@%s: %s", owner, repo, tag, exc)
 
     return None
+
+
+async def fetch_pypi_release_date(
+    session: aiohttp.ClientSession,
+    package: str,
+    version: str,
+) -> str | None:
+    """Return upload date (YYYY-MM-DD) from PyPI for the given package+version."""
+    url = f"https://pypi.org/pypi/{package}/{version}/json"
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                for entry in data.get("urls") or []:
+                    upload = entry.get("upload_time", "")
+                    if upload:
+                        return upload[:10]
+    except Exception as exc:
+        _LOGGER.debug("PyPI request failed for %s==%s: %s", package, version, exc)
+    return None

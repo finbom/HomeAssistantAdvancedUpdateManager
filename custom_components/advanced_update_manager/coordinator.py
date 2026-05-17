@@ -21,7 +21,7 @@ from .const import (
     UPDATE_TYPE_OTHER,
 )
 
-from .github_client import extract_owner_repo, fetch_release_date
+from .github_client import extract_owner_repo, fetch_pypi_release_date, fetch_release_date
 from .storage import UpdateDateStorage
 
 # GitHub release URL templates for entities that don't expose a GitHub release_url
@@ -76,15 +76,21 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
             update_type = self._classify(state, registry)
 
             release_date = self.storage.get(entity_id, new_version)
-            if not release_date and "github.com" in release_url:
-                info = extract_owner_repo(release_url)
-                if info:
-                    owner, repo = info
-                    release_date = await fetch_release_date(
-                        session, owner, repo, new_version, self.github_token
+            if not release_date and new_version:
+                if entity_id == CORE_ENTITY_ID:
+                    # PyPI is more reliable than GitHub API for HA Core (no rate limits)
+                    release_date = await fetch_pypi_release_date(
+                        session, "homeassistant", new_version
                     )
-                    if release_date:
-                        await self.storage.async_set(entity_id, new_version, release_date)
+                elif "github.com" in release_url:
+                    info = extract_owner_repo(release_url)
+                    if info:
+                        owner, repo = info
+                        release_date = await fetch_release_date(
+                            session, owner, repo, new_version, self.github_token
+                        )
+                if release_date:
+                    await self.storage.async_set(entity_id, new_version, release_date)
 
             updates.append({
                 "entity_id": entity_id,

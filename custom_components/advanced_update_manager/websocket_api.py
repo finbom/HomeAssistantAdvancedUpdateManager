@@ -12,6 +12,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_updates)
     websocket_api.async_register_command(hass, ws_install_update)
     websocket_api.async_register_command(hass, ws_skip_update)
+    websocket_api.async_register_command(hass, ws_get_restart_info)
 
 
 @websocket_api.websocket_command({
@@ -56,3 +57,39 @@ async def ws_skip_update(hass: HomeAssistant, connection, msg: dict) -> None:
         blocking=False,
     )
     connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/get_restart_info",
+})
+@websocket_api.async_response
+async def ws_get_restart_info(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Return whether a restart is pending."""
+    restart_required = False
+
+    # Check HA repair issues (HA 2022.9+) — language-independent
+    try:
+        from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+        registry = ir.async_get(hass)
+        for (_, issue_id) in registry.issues:
+            if "restart" in issue_id.lower():
+                restart_required = True
+                break
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Fallback: check persistent notifications by known IDs
+    if not restart_required:
+        _RESTART_NOTIF_IDS = frozenset({
+            "homeassistant_restart",
+            "home_assistant_restart",
+            "hacs_restart",
+            "restart_required",
+        })
+        for state in hass.states.async_all("persistent_notification"):
+            notif_id = state.entity_id.removeprefix("persistent_notification.")
+            if notif_id in _RESTART_NOTIF_IDS:
+                restart_required = True
+                break
+
+    connection.send_result(msg["id"], {"restart_required": restart_required})

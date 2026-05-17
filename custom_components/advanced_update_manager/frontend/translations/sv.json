@@ -22,5 +22,10 @@
   "confirm_body_backup": "Vill du säkerhetskopiera och uppdatera",
   "btn_cancel": "Avbryt",
   "update_count_one": "uppdatering",
-  "update_count_other": "uppdateringar"
+  "update_count_other": "uppdateringar",
+  "restart_banner": "Home Assistant behöver startas om för att de senaste ändringarna ska träda i kraft.",
+  "restart_btn": "Starta om Home Assistant",
+  "confirm_restart_title": "Bekräfta omstart",
+  "confirm_restart_body": "Är du säker på att du vill starta om Home Assistant? Det kommer orsaka ett kort avbrott.",
+  "btn_restart": "Starta om"
 }

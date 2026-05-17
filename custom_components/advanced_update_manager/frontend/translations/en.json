@@ -22,5 +22,10 @@
   "confirm_body_backup": "Do you want to back up and update",
   "btn_cancel": "Cancel",
   "update_count_one": "update",
-  "update_count_other": "updates"
+  "update_count_other": "updates",
+  "restart_banner": "Home Assistant needs to be restarted for recent changes to take effect.",
+  "restart_btn": "Restart Home Assistant",
+  "confirm_restart_title": "Confirm restart",
+  "confirm_restart_body": "Are you sure you want to restart Home Assistant? This will cause a brief outage.",
+  "btn_restart": "Restart"
 }
