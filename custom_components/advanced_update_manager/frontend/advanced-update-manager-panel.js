@@ -13,6 +13,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     this._unsubscribe = null;
     this._initialized = false;
     this._confirm = null;
+    this._t = {};
   }
 
   set hass(hass) {
@@ -28,8 +29,30 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
 
   async _init() {
     this._render();
+    await this._loadTranslations();
     await this._fetchUpdates();
     this._subscribeStateChanges();
+  }
+
+  async _loadTranslations() {
+    const lang = this._hass.locale?.language ?? "en";
+    const base = "/advanced_update_manager_panel/translations/";
+    try {
+      const res = await fetch(`${base}${lang}.json`);
+      if (!res.ok) throw new Error("not found");
+      this._t = await res.json();
+    } catch {
+      try {
+        const res = await fetch(`${base}en.json`);
+        this._t = await res.json();
+      } catch {
+        this._t = {};
+      }
+    }
+  }
+
+  _tr(key, fallback = key) {
+    return this._t[key] ?? fallback;
   }
 
   async _fetchUpdates() {
@@ -42,7 +65,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       });
       this._updates = result.updates || [];
     } catch (e) {
-      this._error = "Kunde inte hämta uppdateringar. Är integrationen laddad?";
+      this._error = this._tr("error_load", "Could not fetch updates. Is the integration loaded?");
       console.error("[AdvancedUpdateManager]", e);
     }
     this._loading = false;
@@ -149,7 +172,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     const inProgress = u.in_progress;
     const dateDisplay = u.release_date || "—";
     const releaseLink = u.release_url
-      ? `<a href="${u.release_url}" target="_blank" rel="noopener" class="release-link" title="Se release notes">↗</a>`
+      ? `<a href="${u.release_url}" target="_blank" rel="noopener" class="release-link" title="${this._tr("release_notes_title", "View release notes")}">↗</a>`
       : "";
 
     return `
@@ -165,11 +188,11 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         <td class="date-cell">${dateDisplay} ${releaseLink}</td>
         <td class="action-cell">
           ${inProgress
-            ? `<span class="badge in-progress-badge">Installerar…</span>`
+            ? `<span class="badge in-progress-badge">${this._tr("installing", "Installing…")}</span>`
             : `
-              <button class="btn btn-update" data-entity="${this._escHtml(u.entity_id)}" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', false)" title="Installera uppdatering">Uppdatera</button>
-              <button class="btn btn-backup" data-entity="${this._escHtml(u.entity_id)}" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', true)" title="Säkerhetskopiera och installera">Backup + Uppdatera</button>
-              <button class="btn btn-skip" onclick="this.getRootNode().host._skip('${this._escHtml(u.entity_id)}')" title="Hoppa över denna version">Hoppa över</button>
+              <button class="btn btn-update" data-entity="${this._escHtml(u.entity_id)}" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', false)" title="${this._tr("btn_update_title", "Install update")}">${this._tr("btn_update", "Update")}</button>
+              <button class="btn btn-backup" data-entity="${this._escHtml(u.entity_id)}" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', true)" title="${this._tr("btn_backup_title", "Back up and install")}">${this._tr("btn_backup_update", "Backup + Update")}</button>
+              <button class="btn btn-skip" onclick="this.getRootNode().host._skip('${this._escHtml(u.entity_id)}')" title="${this._tr("btn_skip_title", "Skip this version")}">${this._tr("btn_skip", "Skip")}</button>
             `}
         </td>
       </tr>`;
@@ -179,7 +202,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     if (this._updates.length === 0) {
       return `<div class="empty-state">
         <span class="empty-icon">✓</span>
-        <p>Allt är uppdaterat!</p>
+        <p>${this._tr("empty_title", "All up to date!")}</p>
       </div>`;
     }
 
@@ -191,19 +214,23 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       if (!groups[type]) continue;
       const color = this._typeColor(type);
       const label = this._typeLabel(type);
+      const count = groups[type].length;
+      const countLabel = count === 1
+        ? `1 ${this._tr("update_count_one", "update")}`
+        : `${count} ${this._tr("update_count_other", "updates")}`;
       html += `
         <div class="group">
           <div class="group-header" style="border-left: 4px solid ${color}">
             <span class="group-badge" style="background:${color}">${label}</span>
-            <span class="group-count">${groups[type].length} uppdatering${groups[type].length !== 1 ? "ar" : ""}</span>
+            <span class="group-count">${countLabel}</span>
           </div>
           <table class="update-table">
             <thead>
               <tr>
-                <th>Namn</th>
-                <th>Version</th>
-                <th>Release-datum</th>
-                <th>Åtgärd</th>
+                <th>${this._tr("col_name", "Name")}</th>
+                <th>${this._tr("col_version", "Version")}</th>
+                <th>${this._tr("col_release_date", "Release date")}</th>
+                <th>${this._tr("col_action", "Action")}</th>
               </tr>
             </thead>
             <tbody>
@@ -218,16 +245,17 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   _renderConfirmModal() {
     if (!this._confirm) return "";
     const { title, backup } = this._confirm;
-    const action = backup ? "Backup + Uppdatera" : "Uppdatera";
-    const verb = backup ? "säkerhetskopiera och uppdatera" : "uppdatera";
+    const bodyKey = backup ? "confirm_body_backup" : "confirm_body_update";
+    const bodyDefault = backup ? "Do you want to back up and update" : "Do you want to update";
+    const actionLabel = backup ? this._tr("btn_backup_update", "Backup + Update") : this._tr("btn_update", "Update");
     return `
       <div class="confirm-overlay">
         <div class="confirm-dialog">
-          <p class="confirm-title">Bekräfta uppdatering</p>
-          <p class="confirm-body">Vill du ${verb} <strong>${this._escHtml(title)}</strong>?</p>
+          <p class="confirm-title">${this._tr("confirm_title", "Confirm update")}</p>
+          <p class="confirm-body">${this._tr(bodyKey, bodyDefault)} <strong>${this._escHtml(title)}</strong>?</p>
           <div class="confirm-actions">
-            <button class="btn btn-skip" onclick="this.getRootNode().host._cancelConfirm()">Avbryt</button>
-            <button class="btn ${backup ? "btn-backup" : "btn-update"}" onclick="this.getRootNode().host._doInstall()">${action}</button>
+            <button class="btn btn-skip" onclick="this.getRootNode().host._cancelConfirm()">${this._tr("btn_cancel", "Cancel")}</button>
+            <button class="btn ${backup ? "btn-backup" : "btn-update"}" onclick="this.getRootNode().host._doInstall()">${actionLabel}</button>
           </div>
         </div>
       </div>`;
@@ -289,14 +317,14 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
       </style>
       <div class="header">
-        <h1>Update Manager</h1>
+        <h1>${this._tr("panel_title", "Update Manager")}</h1>
         <div class="header-actions">
-          <button class="ha-update-btn" onclick="this.getRootNode().host._navigateToHaUpdates()">HA Updates ↗</button>
-          <button class="refresh-btn" onclick="this.getRootNode().host._fetchUpdates()">Uppdatera lista</button>
+          <button class="ha-update-btn" onclick="this.getRootNode().host._navigateToHaUpdates()">${this._tr("ha_updates_btn", "HA Updates ↗")}</button>
+          <button class="refresh-btn" onclick="this.getRootNode().host._fetchUpdates()">${this._tr("refresh_btn", "Refresh list")}</button>
         </div>
       </div>
       ${this._loading
-        ? `<div class="loading">Hämtar uppdateringar…</div>`
+        ? `<div class="loading">${this._tr("loading", "Fetching updates…")}</div>`
         : this._error
           ? `<div class="error">${this._error}</div>`
           : this._renderGroups()}

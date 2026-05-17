@@ -47,6 +47,28 @@ A HACS custom integration that adds a dedicated **Update Manager** panel to your
 | Device | Device firmware (ESPHome, Z-Wave, etc.) |
 | Other | Anything else |
 
+## Language / Translations
+
+The panel automatically uses the same language as your Home Assistant UI (set under **Profile → Language**).
+
+If no translation file exists for your language, the panel falls back to **English**.
+
+### Currently supported languages
+
+| Language | File |
+|----------|------|
+| English | `en.json` (default / fallback) |
+| Swedish | `sv.json` |
+
+### Contributing a translation
+
+1. Fork this repository
+2. Copy `custom_components/advanced_update_manager/frontend/translations/en.json` to a new file named with your language code (e.g. `de.json` for German, `nl.json` for Dutch — use the [BCP 47](https://www.iana.org/assignments/language-subtag-registry/language-subtag-registry) language tag that Home Assistant uses)
+3. Translate all values in the new file — **do not change the keys**
+4. Open a pull request
+
+That's it. No changes to any Python or JavaScript files are needed.
+
 ## License
 
 MIT
