@@ -13,6 +13,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     this._unsubscribe = null;
     this._initialized = false;
     this._confirm = null;  // { type: "install", entityId, backup, title } | { type: "restart" }
+    this._installing = new Set();
     this._t = {};
     this._restartRequired = false;
   }
@@ -95,8 +96,9 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         const newState = event.data?.new_state?.state;
 
         if (oldState === "on" && newState !== "on") {
-          // Update installed — remove from list immediately
+          // Update installed — remove from list and clear installing state
           this._updates = this._updates.filter((u) => u.entity_id !== entityId);
+          this._installing.delete(entityId);
           this._render();
         } else if (newState === "on" && oldState !== "on") {
           this._fetchUpdates();
@@ -136,6 +138,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   async _doInstall() {
     const { entityId, backup } = this._confirm;
     this._confirm = null;
+    this._installing.add(entityId);
     this._render();
     await this._install(entityId, backup);
   }
@@ -156,8 +159,6 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   }
 
   async _install(entityId, backup) {
-    const btn = this.shadowRoot.querySelector(`[data-entity="${entityId}"]`);
-    if (btn) btn.disabled = true;
     try {
       await this._hass.connection.sendMessagePromise({
         type: "advanced_update_manager/install_update",
@@ -166,8 +167,9 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       });
     } catch (e) {
       console.error("[AdvancedUpdateManager] install failed", e);
+      this._installing.delete(entityId);
+      this._render();
     }
-    // State change subscription will update the list
   }
 
   _navigateToHaUpdates() {
@@ -219,14 +221,14 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   }
 
   _renderUpdateRow(u) {
-    const inProgress = u.in_progress;
+    const isInstalling = this._installing.has(u.entity_id) || u.in_progress;
     const dateDisplay = u.release_date || "—";
     const releaseLink = u.release_url
       ? `<a href="${u.release_url}" target="_blank" rel="noopener" class="release-link" title="${this._tr("release_notes_title", "View release notes")}">↗</a>`
       : "";
 
     return `
-      <tr class="update-row${inProgress ? " in-progress" : ""}">
+      <tr class="update-row${isInstalling ? " installing" : ""}">
         <td class="name-cell">
           <span class="title">${this._escHtml(u.title)}</span>
         </td>
@@ -237,11 +239,14 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         </td>
         <td class="date-cell">${dateDisplay} ${releaseLink}</td>
         <td class="action-cell">
-          ${inProgress
-            ? `<span class="badge in-progress-badge">${this._tr("installing", "Installing…")}</span>`
+          ${isInstalling
+            ? `<div class="installing-state">
+                 <span class="badge in-progress-badge">${this._tr("installing", "Installing…")}</span>
+                 <div class="progress-bar"></div>
+               </div>`
             : `
-              <button class="btn btn-update" data-entity="${this._escHtml(u.entity_id)}" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', false)" title="${this._tr("btn_update_title", "Install update")}">${this._tr("btn_update", "Update")}</button>
-              <button class="btn btn-backup" data-entity="${this._escHtml(u.entity_id)}" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', true)" title="${this._tr("btn_backup_title", "Back up and install")}">${this._tr("btn_backup_update", "Backup + Update")}</button>
+              <button class="btn btn-update" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', false)" title="${this._tr("btn_update_title", "Install update")}">${this._tr("btn_update", "Update")}</button>
+              <button class="btn btn-backup" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', true)" title="${this._tr("btn_backup_title", "Back up and install")}">${this._tr("btn_backup_update", "Backup + Update")}</button>
               <button class="btn btn-skip" onclick="this.getRootNode().host._skip('${this._escHtml(u.entity_id)}')" title="${this._tr("btn_skip_title", "Skip this version")}">${this._tr("btn_skip", "Skip")}</button>
             `}
         </td>
@@ -358,7 +363,11 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         .update-table th { text-align: left; padding: 10px 16px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--secondary-text-color); border-bottom: 1px solid var(--divider-color, #e0e0e0); }
         .update-table td { padding: 12px 16px; border-bottom: 1px solid var(--divider-color, #e0e0e0); vertical-align: middle; }
         .update-row:last-child td { border-bottom: none; }
-        .update-row.in-progress { opacity: 0.7; }
+        .update-row.installing { opacity: 0.85; }
+        .installing-state { display: flex; flex-direction: column; gap: 6px; }
+        .progress-bar { position: relative; height: 3px; min-width: 100px; background: var(--divider-color, #e0e0e0); border-radius: 2px; overflow: hidden; }
+        .progress-bar::after { content: ''; position: absolute; top: 0; left: 0; height: 100%; width: 40%; background: var(--primary-color, #03a9f4); border-radius: 2px; animation: aum-progress 1.5s ease-in-out infinite; }
+        @keyframes aum-progress { 0% { transform: translateX(-200%); } 100% { transform: translateX(350%); } }
         .title { font-weight: 500; color: var(--primary-text-color); }
         .version-from { color: var(--secondary-text-color); font-size: 0.875rem; }
         .arrow { margin: 0 6px; color: var(--secondary-text-color); }
@@ -384,8 +393,9 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           .update-table td { display: block; padding: 2px 16px; border: none; }
           .update-row { border-bottom: 1px solid var(--divider-color, #e0e0e0); padding: 10px 0; }
           .update-row:last-child { border-bottom: none; }
-          .update-row.in-progress { opacity: 0.7; }
+          .update-row.installing { opacity: 0.85; }
           .action-cell { padding-top: 8px; white-space: normal; }
+          .progress-bar { min-width: 0; width: 100%; }
           .btn-backup { display: none; }
           .restart-banner { flex-wrap: wrap; }
         }
