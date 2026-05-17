@@ -377,9 +377,15 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         .in-progress-badge { background: var(--warning-color, #ff9800); color: white; }
         .empty-state { text-align: center; padding: 64px; color: var(--secondary-text-color); }
         .empty-icon { font-size: 3rem; display: block; margin-bottom: 12px; color: var(--success-color, #4caf50); }
-        @media (max-width: 600px) {
-          .btn-backup, .btn-skip { display: none; }
-          .update-table th:nth-child(3), .update-table td:nth-child(3) { display: none; }
+        @media (max-width: 640px) {
+          .update-table thead { display: none; }
+          .update-table, .update-table tbody, .update-row { display: block; }
+          .update-table td { display: block; padding: 2px 16px; border: none; }
+          .update-row { border-bottom: 1px solid var(--divider-color, #e0e0e0); padding: 10px 0; }
+          .update-row:last-child { border-bottom: none; }
+          .update-row.in-progress { opacity: 0.7; }
+          .action-cell { padding-top: 8px; white-space: normal; }
+          .btn-backup { display: none; }
           .restart-banner { flex-wrap: wrap; }
         }
         .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
