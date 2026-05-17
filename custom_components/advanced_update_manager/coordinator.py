@@ -71,9 +71,14 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                 template = _GITHUB_URL_TEMPLATES.get(entity_id)
                 if template and new_version:
                     release_url = template.format(version=new_version)
-            title = attrs.get("title") or entity_id
+            entry = registry.async_get(entity_id)
+            title = (
+                attrs.get("title")
+                or (entry and (entry.name or entry.original_name))
+                or self._format_entity_id(entity_id)
+            )
 
-            update_type = self._classify(state, registry)
+            update_type = self._classify(state, entry)
 
             release_date = self.storage.get(entity_id, new_version)
             if not release_date and new_version:
@@ -107,7 +112,7 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
 
         return sorted(updates, key=lambda u: (TYPE_ORDER.get(u["type"], 99), u["title"].lower()))
 
-    def _classify(self, state, registry: er.EntityRegistry) -> str:
+    def _classify(self, state, entry: er.RegistryEntry | None) -> str:
         entity_id = state.entity_id
 
         if entity_id == CORE_ENTITY_ID:
@@ -115,7 +120,6 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
         if entity_id == HAOS_ENTITY_ID:
             return UPDATE_TYPE_HAOS
 
-        entry = registry.async_get(entity_id)
         if entry:
             if entry.platform == "hacs":
                 return UPDATE_TYPE_HACS
@@ -125,3 +129,11 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                 return UPDATE_TYPE_DEVICE
 
         return UPDATE_TYPE_OTHER
+
+    @staticmethod
+    def _format_entity_id(entity_id: str) -> str:
+        """Turn 'update.some_thing_update' into 'Some Thing'."""
+        name = entity_id.removeprefix("update.")
+        if name.endswith("_update"):
+            name = name[:-7]
+        return name.replace("_", " ").title()
