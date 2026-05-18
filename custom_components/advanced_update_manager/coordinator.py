@@ -21,7 +21,7 @@ from .const import (
     UPDATE_TYPE_OTHER,
 )
 
-from .github_client import extract_owner_repo, fetch_pypi_release_date, fetch_release_date, fetch_supervisor_addon_info
+from .github_client import extract_monorepo_subpath, extract_owner_repo, fetch_pypi_release_date, fetch_release_date, fetch_supervisor_addon_info
 from .storage import UpdateDateStorage
 
 # GitHub release URL templates for entities that don't expose a GitHub release_url
@@ -103,8 +103,9 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                         info = extract_owner_repo(github_url)
                         if info:
                             owner, repo = info
+                            tag_prefix = extract_monorepo_subpath(github_url) if update_type == UPDATE_TYPE_ADDON else None
                             release_date = await fetch_release_date(
-                                session, owner, repo, new_version, self.github_token
+                                session, owner, repo, new_version, self.github_token, tag_prefix
                             )
                 if release_date:
                     await self.storage.async_set(entity_id, new_version, release_date)
