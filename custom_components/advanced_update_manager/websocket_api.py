@@ -108,7 +108,7 @@ async def ws_get_restart_info(hass: HomeAssistant, connection, msg: dict) -> Non
         from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
         registry = ir.async_get(hass)
         for (_, issue_id) in registry.issues:
-            if "restart" in issue_id.lower():
+            if issue_id.lower().endswith("restart_required"):
                 restart_required = True
                 break
     except Exception:  # noqa: BLE001
