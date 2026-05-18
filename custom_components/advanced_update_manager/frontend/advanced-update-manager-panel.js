@@ -18,6 +18,8 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     this._restartRequired = false;
     this._showSkipped = false;
     this._skippedUpdates = [];
+    this._sortBy = "type";   // "type" | "date"
+    this._sortDir = "asc";   // "asc" | "desc"
   }
 
   set hass(hass) {
@@ -98,7 +100,6 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         const newState = event.data?.new_state?.state;
 
         if (oldState === "on" && newState !== "on") {
-          // Update installed — remove from list and clear installing state
           this._updates = this._updates.filter((u) => u.entity_id !== entityId);
           this._installing.delete(entityId);
           this._render();
@@ -108,13 +109,10 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           this._fetchUpdates();
         }
       } else if (entityId.startsWith("persistent_notification.")) {
-        // A notification appeared or disappeared — re-check restart state
         this._fetchRestartInfo();
       }
     }, "state_changed");
 
-    // After HA restarts, the persistent_notification disappears silently (no
-    // state_changed fires on reconnect). Re-fetch so the banner clears on mobile.
     this._onConnectionReady = () => {
       this._fetchRestartInfo();
       this._fetchUpdates();
@@ -131,6 +129,16 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       this._hass.connection.removeEventListener("ready", this._onConnectionReady);
       this._onConnectionReady = null;
     }
+  }
+
+  _setSort(field) {
+    if (this._sortBy === field) {
+      this._sortDir = this._sortDir === "asc" ? "desc" : "asc";
+    } else {
+      this._sortBy = field;
+      this._sortDir = field === "date" ? "desc" : "asc";
+    }
+    this._render();
   }
 
   _requestInstall(entityId, backup) {
@@ -244,7 +252,6 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       });
       this._skippedUpdates = this._skippedUpdates.filter((u) => u.entity_id !== entityId);
       this._render();
-      // state_changed handler fires when entity becomes "on" → _fetchUpdates() auto-runs
     } catch (e) {
       console.error("[AdvancedUpdateManager] unskip failed", e);
     }
@@ -256,15 +263,6 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
 
   _typeColor(type) {
     return { core: "#03a9f4", haos: "#4caf50", addon: "#ff9800", hacs: "#9c27b0", device: "#607d8b", other: "#9e9e9e" }[type] || "#9e9e9e";
-  }
-
-  _groupByType(updates) {
-    const groups = {};
-    for (const u of updates) {
-      if (!groups[u.type]) groups[u.type] = [];
-      groups[u.type].push(u);
-    }
-    return groups;
   }
 
   _renderRestartBanner() {
@@ -280,17 +278,20 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       </div>`;
   }
 
-  _renderUpdateRow(u) {
+  _renderUpdateRow(u, showTypeBadge = false) {
     const isInstalling = this._installing.has(u.entity_id) || u.in_progress;
     const dateDisplay = u.release_date || "—";
     const releaseLink = u.release_url
       ? `<a href="${u.release_url}" target="_blank" rel="noopener" class="release-link" title="${this._tr("release_notes_title", "View release notes")}">↗</a>`
       : "";
+    const typeBadge = showTypeBadge
+      ? `<span class="type-chip" style="background:${this._typeColor(u.type)}">${this._typeLabel(u.type)}</span>`
+      : "";
 
     return `
       <tr class="update-row${isInstalling ? " installing" : ""}">
         <td class="name-cell">
-          <span class="title">${this._escHtml(u.title)}</span>
+          ${typeBadge}<span class="title">${this._escHtml(u.title)}</span>
         </td>
         <td class="version-cell">
           <span class="version-from">${this._escHtml(u.installed_version)}</span>
@@ -313,19 +314,28 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       </tr>`;
   }
 
-  _renderGroups() {
+  _renderUpdates() {
     if (this._updates.length === 0) {
       return `<div class="empty-state">
         <span class="empty-icon">✓</span>
         <p>${this._tr("empty_title", "All up to date!")}</p>
       </div>`;
     }
+    return this._sortBy === "date" ? this._renderFlat() : this._renderGrouped();
+  }
 
-    const groups = this._groupByType(this._updates);
+  _renderGrouped() {
     const typeOrder = ["core", "haos", "addon", "hacs", "device", "other"];
-    let html = "";
+    const orderedTypes = this._sortDir === "asc" ? typeOrder : [...typeOrder].reverse();
 
-    for (const type of typeOrder) {
+    const groups = {};
+    for (const u of this._updates) {
+      if (!groups[u.type]) groups[u.type] = [];
+      groups[u.type].push(u);
+    }
+
+    let html = "";
+    for (const type of orderedTypes) {
       if (!groups[type]) continue;
       const color = this._typeColor(type);
       const label = this._typeLabel(type);
@@ -349,12 +359,40 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
               </tr>
             </thead>
             <tbody>
-              ${groups[type].map((u) => this._renderUpdateRow(u)).join("")}
+              ${groups[type].map((u) => this._renderUpdateRow(u, false)).join("")}
             </tbody>
           </table>
         </div>`;
     }
     return html;
+  }
+
+  _renderFlat() {
+    const sorted = [...this._updates].sort((a, b) => {
+      const aHasDate = !!a.release_date;
+      const bHasDate = !!b.release_date;
+      if (aHasDate !== bHasDate) return aHasDate ? -1 : 1;
+      if (!aHasDate) return 0;
+      const cmp = a.release_date.localeCompare(b.release_date);
+      return this._sortDir === "asc" ? cmp : -cmp;
+    });
+
+    return `
+      <div class="group">
+        <table class="update-table">
+          <thead>
+            <tr>
+              <th>${this._tr("col_name", "Name")}</th>
+              <th>${this._tr("col_version", "Version")}</th>
+              <th>${this._tr("col_release_date", "Release date")}</th>
+              <th>${this._tr("col_action", "Action")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sorted.map((u) => this._renderUpdateRow(u, true)).join("")}
+          </tbody>
+        </table>
+      </div>`;
   }
 
   _renderSkippedSection() {
@@ -449,13 +487,34 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
+  _renderSortButtons() {
+    const arrow = this._sortDir === "asc" ? "↑" : "↓";
+    const typeActive = this._sortBy === "type";
+    const dateActive = this._sortBy === "date";
+    return `
+      <div class="sort-group">
+        <span class="sort-label">${this._tr("sort_label", "Sort")}:</span>
+        <button class="sort-btn${typeActive ? " active" : ""}" onclick="this.getRootNode().host._setSort('type')">
+          ${this._tr("sort_type", "Type")}${typeActive ? ` ${arrow}` : ""}
+        </button>
+        <button class="sort-btn${dateActive ? " active" : ""}" onclick="this.getRootNode().host._setSort('date')">
+          ${this._tr("sort_date", "Release date")}${dateActive ? ` ${arrow}` : ""}
+        </button>
+      </div>`;
+  }
+
   _render() {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; padding: 16px; font-family: var(--paper-font-body1_-_font-family, sans-serif); }
-        .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+        .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
         .header h1 { margin: 0; font-size: 1.5rem; font-weight: 500; color: var(--primary-text-color); }
-        .header-actions { display: flex; gap: 8px; align-items: center; }
+        .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .sort-group { display: flex; align-items: center; gap: 4px; }
+        .sort-label { font-size: 0.8rem; color: var(--secondary-text-color); white-space: nowrap; }
+        .sort-btn { background: none; border: 1px solid var(--divider-color, #e0e0e0); color: var(--secondary-text-color); border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 0.8rem; white-space: nowrap; transition: all 0.15s; }
+        .sort-btn:hover { background: var(--secondary-background-color, #f5f5f5); }
+        .sort-btn.active { border-color: var(--primary-color, #03a9f4); color: var(--primary-color, #03a9f4); background: rgba(3,169,244,0.08); font-weight: 600; }
         .refresh-btn { background: none; border: 1px solid var(--primary-color, #03a9f4); color: var(--primary-color, #03a9f4); border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 0.875rem; }
         .refresh-btn:hover { background: var(--primary-color, #03a9f4); color: white; }
         .ha-update-btn { background: none; border: 1px solid var(--divider-color, #e0e0e0); color: var(--secondary-text-color); border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 0.875rem; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
@@ -487,7 +546,8 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         .progress-bar { position: relative; height: 3px; min-width: 100px; background: var(--divider-color, #e0e0e0); border-radius: 2px; overflow: hidden; }
         .progress-bar::after { content: ''; position: absolute; top: 0; left: 0; height: 100%; width: 40%; background: var(--primary-color, #03a9f4); border-radius: 2px; animation: aum-progress 1.5s ease-in-out infinite; }
         @keyframes aum-progress { 0% { transform: translateX(-200%); } 100% { transform: translateX(350%); } }
-        .title { font-weight: 500; color: var(--primary-text-color); }
+        .type-chip { display: inline-block; color: white; padding: 1px 7px; border-radius: 10px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; margin-right: 8px; vertical-align: middle; }
+        .title { font-weight: 500; color: var(--primary-text-color); vertical-align: middle; }
         .version-from { color: var(--secondary-text-color); font-size: 0.875rem; }
         .arrow { margin: 0 6px; color: var(--secondary-text-color); }
         .version-to { color: var(--primary-color, #03a9f4); font-weight: 500; font-size: 0.875rem; }
@@ -517,6 +577,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           .progress-bar { min-width: 0; width: 100%; }
           .btn-backup { display: none; }
           .restart-banner { flex-wrap: wrap; }
+          .header-actions { width: 100%; justify-content: flex-start; }
         }
         .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
         .confirm-dialog { background: var(--card-background-color, white); border-radius: 8px; padding: 24px; max-width: 400px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
@@ -527,6 +588,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       <div class="header">
         <h1>${this._tr("panel_title", "Update Manager")}</h1>
         <div class="header-actions">
+          ${this._renderSortButtons()}
           <button class="ha-update-btn" onclick="this.getRootNode().host._navigateToHaUpdates()">${this._tr("ha_updates_btn", "HA Updates ↗")}</button>
           <button class="toggle-skipped-btn${this._showSkipped ? " active" : ""}" onclick="this.getRootNode().host._toggleSkipped()">${this._showSkipped ? this._tr("hide_skipped_btn", "Hide skipped") : this._tr("show_skipped_btn", "Show skipped")}</button>
           <button class="refresh-btn" onclick="this.getRootNode().host._fetchUpdates()">${this._tr("refresh_btn", "Refresh list")}</button>
@@ -537,7 +599,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         ? `<div class="loading">${this._tr("loading", "Fetching updates…")}</div>`
         : this._error
           ? `<div class="error">${this._error}</div>`
-          : this._renderGroups()}
+          : this._renderUpdates()}
       ${this._renderSkippedSection()}
       ${this._renderConfirmModal()}
     `;
