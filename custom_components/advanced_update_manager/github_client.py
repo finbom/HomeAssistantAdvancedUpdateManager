@@ -6,6 +6,7 @@ import os
 import re
 
 import aiohttp
+import xml.etree.ElementTree as ET
 
 _LOGGER = logging.getLogger(__name__)
 GITHUB_API = "https://api.github.com"
@@ -23,6 +24,46 @@ def extract_monorepo_subpath(url: str) -> str | None:
     """Return the add-on subfolder name from a monorepo URL like .../tree/main/samba."""
     match = re.search(r"github\.com/[^/]+/[^/?#]+/(?:tree|blob)/[^/]+/([^/?#]+)", url)
     return match.group(1) if match else None
+
+
+async def fetch_release_date_from_atom(
+    session: aiohttp.ClientSession,
+    owner: str,
+    repo: str,
+    version: str,
+) -> str | None:
+    """Fetch release date from the GitHub Atom feed — no auth, no REST rate limit.
+
+    Only covers the latest ~10 releases, so this is a fast, cheap step before
+    falling back to the git-tag API.
+    """
+    bare = {version, f"v{version}"} if not version.startswith("v") else {version, version[1:]}
+    url = f"https://github.com/{owner}/{repo}/releases.atom"
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status != 200:
+                return None
+            text = await resp.text()
+        ns = {"a": "http://www.w3.org/2005/Atom"}
+        root = ET.fromstring(text)
+        for entry in root.findall("a:entry", ns):
+            # Prefer the <link> href which always encodes the tag name cleanly
+            link_el = entry.find("a:link", ns)
+            id_el = entry.find("a:id", ns)
+            tag = ""
+            if link_el is not None:
+                href = link_el.get("href", "")
+                if "/releases/tag/" in href:
+                    tag = href.rsplit("/releases/tag/", 1)[-1]
+            if not tag and id_el is not None:
+                tag = (id_el.text or "").rsplit("/", 1)[-1]
+            if tag in bare:
+                updated_el = entry.find("a:updated", ns)
+                if updated_el is not None and updated_el.text:
+                    return updated_el.text[:10]
+    except Exception as exc:
+        _LOGGER.debug("Atom feed failed for %s/%s: %s", owner, repo, exc)
+    return None
 
 
 async def _fetch_tag_date(
@@ -104,7 +145,12 @@ async def fetch_release_date(
         except Exception as exc:
             _LOGGER.debug("GitHub release request failed for %s/%s@%s: %s", owner, repo, tag, exc)
 
-    # 2. Fall back to git tag → commit date (handles repos without formal releases)
+    # 2. Atom feed — no auth, covers the latest ~10 releases without REST rate limits
+    atom_date = await fetch_release_date_from_atom(session, owner, repo, version)
+    if atom_date:
+        return atom_date
+
+    # 3. Fall back to git tag → commit date (handles repos without formal releases)
     for tag in candidates:
         date = await _fetch_tag_date(session, owner, repo, tag, headers)
         if date:

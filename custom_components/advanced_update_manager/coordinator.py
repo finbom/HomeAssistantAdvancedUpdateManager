@@ -80,18 +80,35 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
 
             update_type = self._classify(state, entry)
 
+            # HACS entities sometimes have no release_url (HACS returns None when
+            # releases aren't cached yet). Fall back to unique_id which HACS sets to
+            # the repository full_name, e.g. "piitaya/lovelace-mushroom".
+            if update_type == UPDATE_TYPE_HACS and (not release_url or "github.com" not in release_url):
+                uid = entry.unique_id if entry else None
+                if uid and "/" in uid and not uid.startswith("http"):
+                    base = f"https://github.com/{uid}"
+                    release_url = f"{base}/releases/tag/{new_version}" if new_version else base
+
+            # Layer 1 — persistent cache
             release_date = self.storage.get(entity_id, new_version)
+
+            # Layer 2 — HACS in-memory store (zero network calls)
+            if not release_date and new_version and update_type == UPDATE_TYPE_HACS:
+                uid = entry.unique_id if entry else None
+                if uid and "/" in uid and not uid.startswith("http"):
+                    local_date, local_url = self._get_from_hacs_store(uid, new_version)
+                    if local_date:
+                        release_date = local_date
+                    if local_url:
+                        release_url = local_url
+
+            # Layer 3+ — remote lookups (PyPI → GitHub REST API → Atom feed → git tag)
             if not release_date and new_version:
                 if entity_id == CORE_ENTITY_ID:
-                    # PyPI is more reliable than GitHub API for HA Core (no rate limits)
                     release_date = await fetch_pypi_release_date(
                         session, "homeassistant", new_version
                     )
                 else:
-                    # For Supervisor addons, the release_url attribute may point to a
-                    # generic monorepo URL (e.g. home-assistant/addons) that has no
-                    # per-addon releases. Prefer the addon's own GitHub repo from the
-                    # Supervisor API instead.
                     github_url = release_url
                     if update_type == UPDATE_TYPE_ADDON and entry and entry.unique_id:
                         addon_info = await fetch_supervisor_addon_info(session, entry.unique_id)
@@ -107,8 +124,9 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                             release_date = await fetch_release_date(
                                 session, owner, repo, new_version, self.github_token, tag_prefix
                             )
-                if release_date:
-                    await self.storage.async_set(entity_id, new_version, release_date)
+
+            if release_date:
+                await self.storage.async_set(entity_id, new_version, release_date)
 
             updates.append({
                 "entity_id": entity_id,
@@ -142,6 +160,30 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                 return UPDATE_TYPE_DEVICE
 
         return UPDATE_TYPE_OTHER
+
+    def _get_from_hacs_store(self, full_name: str, version: str) -> tuple[str, str]:
+        """Read release date and URL from HACS's in-memory repository store.
+
+        Returns (date, url) strings; both empty when HACS isn't loaded or the
+        version isn't in the cached releases list.
+        """
+        try:
+            hacs = self.hass.data.get("hacs")
+            if not hacs:
+                return "", ""
+            repo = hacs.repositories.get_by_full_name(full_name)
+            if not repo:
+                return "", ""
+            bare = {version, f"v{version}"} if not version.startswith("v") else {version, version[1:]}
+            for release in getattr(repo.releases, "objects", None) or []:
+                tag = getattr(release, "tag_name", "") or ""
+                if tag in bare:
+                    url = getattr(release, "html_url", "") or ""
+                    date_str = getattr(release, "published_at", "") or ""
+                    return date_str[:10], url
+        except Exception as exc:
+            _LOGGER.debug("HACS store lookup failed for %s: %s", full_name, exc)
+        return "", ""
 
     @staticmethod
     def _format_entity_id(entity_id: str) -> str:
