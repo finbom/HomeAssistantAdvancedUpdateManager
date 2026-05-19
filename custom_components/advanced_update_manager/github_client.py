@@ -21,9 +21,26 @@ def extract_owner_repo(url: str) -> tuple[str, str] | None:
 
 
 def extract_monorepo_subpath(url: str) -> str | None:
-    """Return the add-on subfolder name from a monorepo URL like .../tree/main/samba."""
-    match = re.search(r"github\.com/[^/]+/[^/?#]+/(?:tree|blob)/[^/]+/([^/?#]+)", url)
-    return match.group(1) if match else None
+    """Return the add-on subfolder name from a monorepo URL.
+    
+    Handles multiple URL patterns:
+    - /tree/branch/subfolder (e.g., https://github.com/home-assistant/addons/tree/master/samba)
+    - /blob/branch/subfolder/file (e.g., https://github.com/home-assistant/addons/blob/master/samba/README.md)
+    - Just the first path segment after branch (for URLs with trailing paths)
+    
+    Returns the first-level subfolder name (e.g., 'samba', 'mosquitto', etc.)
+    """
+    # Pattern 1: /tree/branch/{subfolder}[/...]
+    match = re.search(r"github\.com/[^/]+/[^/?#]+/tree/[^/]+/([^/?#]+)", url)
+    if match:
+        return match.group(1)
+    
+    # Pattern 2: /blob/branch/{subfolder}[/...]
+    match = re.search(r"github\.com/[^/]+/[^/?#]+/blob/[^/]+/([^/?#]+)", url)
+    if match:
+        return match.group(1)
+    
+    return None
 
 
 async def fetch_release_date_from_atom(
@@ -198,3 +215,37 @@ async def fetch_pypi_release_date(
     except Exception as exc:
         _LOGGER.debug("PyPI request failed for %s==%s: %s", package, version, exc)
     return None
+
+
+async def fetch_ha_addon_registry_date(
+    session: aiohttp.ClientSession,
+    addon_slug: str,
+    version: str,
+) -> str | None:
+    """Fetch release date from Home Assistant's official add-on registry.
+    
+    The registry is a public GitHub repo with metadata for all official add-ons.
+    This is a reliable fallback for official add-ons when other methods fail.
+    
+    Returns YYYY-MM-DD or None.
+    """
+    owner = "home-assistant"
+    repo = "addons"
+    
+    # Try the official registry repo using the add-on slug
+    release_date = await fetch_release_date(
+        session, owner, repo, version, token=None, tag_prefix=addon_slug
+    )
+    
+    if release_date:
+        _LOGGER.debug(
+            "Found release date for add-on %s@%s in HA registry: %s",
+            addon_slug, version, release_date
+        )
+    else:
+        _LOGGER.debug(
+            "No release date found in HA registry for add-on %s@%s",
+            addon_slug, version
+        )
+    
+    return release_date
