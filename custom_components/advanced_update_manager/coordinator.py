@@ -21,7 +21,7 @@ from .const import (
     UPDATE_TYPE_OTHER,
 )
 
-from .github_client import extract_monorepo_subpath, extract_owner_repo, fetch_ha_addon_registry_date, fetch_pypi_release_date, fetch_release_date, fetch_supervisor_addon_info
+from .github_client import extract_monorepo_subpath, extract_owner_repo, fetch_addon_config_date, fetch_ha_addon_registry_date, fetch_pypi_release_date, fetch_release_date, fetch_supervisor_addon_info
 from .storage import UpdateDateStorage
 
 # GitHub release URL templates for entities that don't expose a GitHub release_url
@@ -125,7 +125,13 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                                 session, owner, repo, new_version, self.github_token, tag_prefix
                             )
 
-                    # Layer 4 — HA official add-on registry (home-assistant/addons monorepo)
+                            # Layer 4 — config.yaml commit date (works for add-ons without releases/tags)
+                            if not release_date and update_type == UPDATE_TYPE_ADDON:
+                                release_date = await fetch_addon_config_date(
+                                    session, owner, repo, new_version, self.github_token, tag_prefix
+                                )
+
+                    # Layer 5 — HA official add-on registry (home-assistant/addons monorepo)
                     if not release_date and update_type == UPDATE_TYPE_ADDON and entry and entry.unique_id:
                         addon_slug = entry.unique_id.removeprefix("core_")
                         release_date = await fetch_ha_addon_registry_date(

@@ -1,6 +1,7 @@
 """GitHub API client — fetches release dates for update entities."""
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import re
@@ -222,30 +223,84 @@ async def fetch_ha_addon_registry_date(
     addon_slug: str,
     version: str,
 ) -> str | None:
-    """Fetch release date from Home Assistant's official add-on registry.
-    
-    The registry is a public GitHub repo with metadata for all official add-ons.
-    This is a reliable fallback for official add-ons when other methods fail.
-    
+    """Fetch release date from Home Assistant's official add-on registry monorepo."""
+    return await fetch_release_date(
+        session, "home-assistant", "addons", version, token=None, tag_prefix=addon_slug
+    )
+
+
+async def fetch_addon_config_date(
+    session: aiohttp.ClientSession,
+    owner: str,
+    repo: str,
+    version: str,
+    token: str | None = None,
+    subpath: str | None = None,
+) -> str | None:
+    """Find the commit date when an add-on's config file was bumped to the given version.
+
+    Most add-ons never create GitHub Releases or tags, but they always commit a
+    config.yaml / config.json with the version field.  The commit that introduced
+    the current version is the most reliable release timestamp available.
+
     Returns YYYY-MM-DD or None.
     """
-    owner = "home-assistant"
-    repo = "addons"
-    
-    # Try the official registry repo using the add-on slug
-    release_date = await fetch_release_date(
-        session, owner, repo, version, token=None, tag_prefix=addon_slug
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    bare = version.lstrip("v")
+    version_re = re.compile(
+        r"""["\']?version["\']?\s*[:=]\s*["\']?""" + re.escape(bare) + r"""["\']?""",
+        re.IGNORECASE,
     )
-    
-    if release_date:
-        _LOGGER.debug(
-            "Found release date for add-on %s@%s in HA registry: %s",
-            addon_slug, version, release_date
-        )
-    else:
-        _LOGGER.debug(
-            "No release date found in HA registry for add-on %s@%s",
-            addon_slug, version
-        )
-    
-    return release_date
+
+    for config_file in ("config.yaml", "config.json"):
+        path = f"{subpath}/{config_file}" if subpath else config_file
+
+        try:
+            async with session.get(
+                f"{GITHUB_API}/repos/{owner}/{repo}/commits",
+                headers=headers,
+                params={"path": path, "per_page": 10},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    continue
+                commits = await resp.json()
+        except Exception as exc:
+            _LOGGER.debug("commit list failed %s/%s %s: %s", owner, repo, path, exc)
+            continue
+
+        for commit in commits:
+            sha = commit.get("sha", "")
+            commit_info = commit.get("commit") or {}
+            raw_date = (
+                (commit_info.get("committer") or {}).get("date")
+                or (commit_info.get("author") or {}).get("date")
+                or ""
+            )
+
+            try:
+                async with session.get(
+                    f"{GITHUB_API}/repos/{owner}/{repo}/contents/{path}",
+                    headers=headers,
+                    params={"ref": sha},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json()
+                    content = base64.b64decode(data.get("content", "")).decode("utf-8", errors="ignore")
+            except Exception as exc:
+                _LOGGER.debug("content fetch failed %s@%s: %s", path, sha, exc)
+                continue
+
+            if version_re.search(content):
+                _LOGGER.debug(
+                    "Found config commit date for %s/%s@%s via %s: %s",
+                    owner, repo, version, path, raw_date[:10],
+                )
+                return raw_date[:10] if raw_date else None
+
+    return None
