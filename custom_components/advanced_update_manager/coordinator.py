@@ -32,6 +32,21 @@ _GITHUB_URL_TEMPLATES = {
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _addon_slug(unique_id: str) -> str:
+    """Extract the add-on subfolder name from a Supervisor unique_id.
+
+    Supervisor slugs:
+    - Official HA add-ons:  core_{slug}       → samba
+    - Community add-ons:    {8-hex}_{slug}    → esphome
+    """
+    if len(unique_id) > 9 and unique_id[8] == "_" and all(
+        c in "0123456789abcdefABCDEF" for c in unique_id[:8]
+    ):
+        unique_id = unique_id[9:]
+    return unique_id.removeprefix("core_")
+
+
 TYPE_ORDER = {
     UPDATE_TYPE_CORE: 0,
     UPDATE_TYPE_HAOS: 1,
@@ -110,11 +125,16 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                     )
                 else:
                     github_url = release_url
+                    supervisor_url = ""
                     if update_type == UPDATE_TYPE_ADDON and entry and entry.unique_id:
                         addon_info = await fetch_supervisor_addon_info(session, entry.unique_id)
                         supervisor_url = (addon_info or {}).get("url", "")
                         if supervisor_url and "github.com" in supervisor_url:
                             github_url = supervisor_url
+
+                        # Hardcoded fallback: official HA add-ons always live in home-assistant/addons
+                        if "github.com" not in github_url and entry.unique_id.startswith("core_"):
+                            github_url = "https://github.com/home-assistant/addons"
 
                     if "github.com" in github_url:
                         info = extract_owner_repo(github_url)
@@ -127,17 +147,22 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
 
                             # Layer 4 — config.yaml commit date (works for add-ons without releases/tags)
                             if not release_date and update_type == UPDATE_TYPE_ADDON:
-                                slug = entry.unique_id.removeprefix("core_") if entry and entry.unique_id else None
+                                slug = _addon_slug(entry.unique_id) if entry and entry.unique_id else None
                                 release_date = await fetch_addon_config_date(
                                     session, owner, repo, new_version, self.github_token,
                                     subpath=tag_prefix, slug=slug,
                                 )
+                    elif update_type == UPDATE_TYPE_ADDON:
+                        _LOGGER.warning(
+                            "No GitHub URL for add-on %s (release_url=%r, supervisor_url=%r) — skipping date lookup",
+                            entity_id, release_url, supervisor_url,
+                        )
 
                     # Layer 5 — HA official add-on registry (home-assistant/addons monorepo)
                     if not release_date and update_type == UPDATE_TYPE_ADDON and entry and entry.unique_id:
-                        addon_slug = entry.unique_id.removeprefix("core_")
+                        slug = _addon_slug(entry.unique_id)
                         release_date = await fetch_ha_addon_registry_date(
-                            session, addon_slug, new_version
+                            session, slug, new_version
                         )
 
             if release_date:
