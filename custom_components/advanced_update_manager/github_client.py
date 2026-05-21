@@ -181,18 +181,45 @@ async def fetch_release_date(
 async def fetch_supervisor_addon_info(
     session: aiohttp.ClientSession, slug: str
 ) -> dict | None:
-    """Return addon metadata dict from the Supervisor REST API, or None."""
+    """Return addon metadata dict from the Supervisor REST API, or None.
+
+    If the add-on's own url field doesn't point to GitHub (e.g. it's the
+    project website), we follow up with a store/repositories lookup to get
+    the actual Git source URL of the add-on repository.
+    """
     token = os.environ.get("SUPERVISOR_TOKEN")
     if not token:
         return None
+    headers = {"Authorization": f"Bearer {token}"}
     try:
         async with session.get(
             f"http://supervisor/addons/{slug}/info",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
             timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
-            if resp.status == 200:
-                return (await resp.json()).get("data") or {}
+            if resp.status != 200:
+                return None
+            data = (await resp.json()).get("data") or {}
+
+        # If the add-on url is not a GitHub URL, try the store repository source.
+        if "github.com" not in (data.get("url") or ""):
+            repo_id = data.get("repository", "")
+            if repo_id and repo_id not in ("core", "local"):
+                try:
+                    async with session.get(
+                        f"http://supervisor/store/repositories/{repo_id}",
+                        headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as repo_resp:
+                        if repo_resp.status == 200:
+                            repo_data = (await repo_resp.json()).get("data") or {}
+                            source = repo_data.get("source", "")
+                            if source and "github.com" in source:
+                                data["url"] = source
+                except Exception as exc:
+                    _LOGGER.debug("Supervisor repo lookup failed for %s: %s", repo_id, exc)
+
+        return data
     except Exception as exc:
         _LOGGER.debug("Supervisor addon info failed for %s: %s", slug, exc)
     return None
