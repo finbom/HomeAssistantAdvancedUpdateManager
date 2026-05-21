@@ -70,7 +70,11 @@ If no translation file exists for your language, the panel falls back to **Engli
 That's it. No changes to any Python or JavaScript files are needed.
 
 ## Screenshots
+
+Sort by release date.
 ![Sort by date](assets/AU-sortbydate.jpg)
+
+Sort by update type. (Core, HACS, Apps etc...)
 ![Sort by type](assets/AU-sortbytype.jpg)
 
 
