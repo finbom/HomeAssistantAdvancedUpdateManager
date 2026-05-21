@@ -129,21 +129,33 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                     if update_type == UPDATE_TYPE_ADDON and entry and entry.unique_id:
                         addon_info = await fetch_supervisor_addon_info(session, entry.unique_id)
                         supervisor_url = (addon_info or {}).get("url", "")
+                        # Only replace github_url with supervisor URL when release_url has no
+                        # GitHub URL — the release_url may contain a subpath (/blob/…/samba/…)
+                        # that the bare supervisor URL lacks.
                         if supervisor_url and "github.com" in supervisor_url:
-                            github_url = supervisor_url
+                            if "github.com" not in github_url:
+                                github_url = supervisor_url
 
                         # Hardcoded fallback: official HA add-ons always live in home-assistant/addons
                         if "github.com" not in github_url and entry.unique_id.startswith("core_"):
                             github_url = "https://github.com/home-assistant/addons"
+
+                    if update_type == UPDATE_TYPE_ADDON:
+                        _LOGGER.warning(
+                            "AUM add-on lookup: entity=%s release_url=%r supervisor_url=%r github_url=%r",
+                            entity_id, release_url, supervisor_url, github_url,
+                        )
 
                     if "github.com" in github_url:
                         info = extract_owner_repo(github_url)
                         if info:
                             owner, repo = info
                             tag_prefix = extract_monorepo_subpath(github_url) if update_type == UPDATE_TYPE_ADDON else None
+                            _LOGGER.warning("AUM add-on repo: %s/%s subpath=%r", owner, repo, tag_prefix)
                             release_date = await fetch_release_date(
                                 session, owner, repo, new_version, self.github_token, tag_prefix
                             )
+                            _LOGGER.warning("AUM fetch_release_date result: %r", release_date)
 
                             # Layer 4 — config.yaml commit date (works for add-ons without releases/tags)
                             if not release_date and update_type == UPDATE_TYPE_ADDON:
@@ -152,10 +164,11 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                                     session, owner, repo, new_version, self.github_token,
                                     subpath=tag_prefix, slug=slug,
                                 )
+                                _LOGGER.warning("AUM fetch_addon_config_date result: %r (slug=%r)", release_date, slug)
                     elif update_type == UPDATE_TYPE_ADDON:
                         _LOGGER.warning(
-                            "No GitHub URL for add-on %s (release_url=%r, supervisor_url=%r) — skipping date lookup",
-                            entity_id, release_url, supervisor_url,
+                            "AUM: no GitHub URL for %s — date lookup skipped entirely",
+                            entity_id,
                         )
 
                     # Layer 5 — HA official add-on registry (home-assistant/addons monorepo)
