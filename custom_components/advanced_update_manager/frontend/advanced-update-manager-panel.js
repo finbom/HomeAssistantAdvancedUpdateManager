@@ -258,7 +258,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   }
 
   _typeLabel(type) {
-    return { core: "Core", haos: "HA OS", addon: "Add-on", hacs: "HACS", device: "Device", other: "Other" }[type] || type;
+    return { core: "Core", haos: "HA OS", addon: "Apps", hacs: "HACS", device: "Device", other: "Other" }[type] || type;
   }
 
   _typeColor(type) {
