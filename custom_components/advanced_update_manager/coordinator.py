@@ -36,15 +36,17 @@ _LOGGER = logging.getLogger(__name__)
 def _addon_slug(unique_id: str) -> str:
     """Extract the add-on subfolder name from a Supervisor unique_id.
 
+    HA appends _version_latest to the slug when creating the unique_id.
     Supervisor slugs:
-    - Official HA add-ons:  core_{slug}       → samba
-    - Community add-ons:    {8-hex}_{slug}    → esphome
+    - Official HA add-ons:  core_{slug}_version_latest  → samba
+    - Community add-ons:    {8-hex}_{slug}_version_latest → esphome
     """
-    if len(unique_id) > 9 and unique_id[8] == "_" and all(
-        c in "0123456789abcdefABCDEF" for c in unique_id[:8]
+    slug = unique_id.removesuffix("_version_latest")
+    if len(slug) > 9 and slug[8] == "_" and all(
+        c in "0123456789abcdefABCDEF" for c in slug[:8]
     ):
-        unique_id = unique_id[9:]
-    return unique_id.removeprefix("core_")
+        slug = slug[9:]
+    return slug.removeprefix("core_")
 
 
 TYPE_ORDER = {
@@ -127,7 +129,9 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                     github_url = release_url
                     supervisor_url = ""
                     if update_type == UPDATE_TYPE_ADDON and entry and entry.unique_id:
-                        addon_info = await fetch_supervisor_addon_info(session, entry.unique_id)
+                        # Strip _version_latest suffix — HA appends this to the slug in unique_id
+                        supervisor_slug = entry.unique_id.removesuffix("_version_latest")
+                        addon_info = await fetch_supervisor_addon_info(session, supervisor_slug)
                         supervisor_url = (addon_info or {}).get("url", "")
                         # Only replace github_url with supervisor URL when release_url has no
                         # GitHub URL — the release_url may contain a subpath (/blob/…/samba/…)
@@ -137,7 +141,7 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                                 github_url = supervisor_url
 
                         # Hardcoded fallback: official HA add-ons always live in home-assistant/addons
-                        if "github.com" not in github_url and entry.unique_id.startswith("core_"):
+                        if "github.com" not in github_url and supervisor_slug.startswith("core_"):
                             github_url = "https://github.com/home-assistant/addons"
 
                     if update_type == UPDATE_TYPE_ADDON:
