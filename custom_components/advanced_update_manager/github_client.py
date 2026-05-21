@@ -236,12 +236,15 @@ async def fetch_addon_config_date(
     version: str,
     token: str | None = None,
     subpath: str | None = None,
+    slug: str | None = None,
 ) -> str | None:
-    """Find the commit date when an add-on's config file was bumped to the given version.
+    """Find the commit date when an add-on config was bumped to the given version.
 
-    Most add-ons never create GitHub Releases or tags, but they always commit a
-    config.yaml / config.json with the version field.  The commit that introduced
-    the current version is the most reliable release timestamp available.
+    Strategy (in order):
+    1. Check commits to config.yaml / config.json at the known subpath(s).
+       The commit whose file content contains the target version is the release.
+    2. Search recent commit messages on the default branch for the version string.
+       Most maintainers include the version in the commit message.
 
     Returns YYYY-MM-DD or None.
     """
@@ -255,14 +258,27 @@ async def fetch_addon_config_date(
         re.IGNORECASE,
     )
 
-    for config_file in ("config.yaml", "config.json"):
-        path = f"{subpath}/{config_file}" if subpath else config_file
+    # Build ordered, deduplicated list of config paths to check.
+    # Try subpath and slug variants before falling back to repo root.
+    paths: list[str] = []
+    seen: set[str] = set()
+    for prefix in filter(None, [subpath, slug if slug != subpath else None]):
+        for fname in ("config.yaml", "config.json"):
+            p = f"{prefix}/{fname}"
+            if p not in seen:
+                paths.append(p)
+                seen.add(p)
+    for fname in ("config.yaml", "config.json"):
+        if fname not in seen:
+            paths.append(fname)
+            seen.add(fname)
 
+    for path in paths:
         try:
             async with session.get(
                 f"{GITHUB_API}/repos/{owner}/{repo}/commits",
                 headers=headers,
-                params={"path": path, "per_page": 10},
+                params={"path": path, "per_page": 5},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status != 200:
@@ -280,7 +296,6 @@ async def fetch_addon_config_date(
                 or (commit_info.get("author") or {}).get("date")
                 or ""
             )
-
             try:
                 async with session.get(
                     f"{GITHUB_API}/repos/{owner}/{repo}/contents/{path}",
@@ -297,10 +312,32 @@ async def fetch_addon_config_date(
                 continue
 
             if version_re.search(content):
-                _LOGGER.debug(
-                    "Found config commit date for %s/%s@%s via %s: %s",
-                    owner, repo, version, path, raw_date[:10],
-                )
+                _LOGGER.debug("config commit date %s/%s@%s via %s: %s", owner, repo, version, path, raw_date[:10])
                 return raw_date[:10] if raw_date else None
+
+    # Fallback: scan recent commit messages for the version string.
+    # Most maintainers include the version in the commit message (e.g. "Bump to 12.6.1").
+    version_msg_re = re.compile(r"\b" + re.escape(bare) + r"\b")
+    try:
+        async with session.get(
+            f"{GITHUB_API}/repos/{owner}/{repo}/commits",
+            headers=headers,
+            params={"per_page": 50},
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            if resp.status == 200:
+                for commit in await resp.json():
+                    commit_info = commit.get("commit") or {}
+                    if version_msg_re.search(commit_info.get("message", "")):
+                        raw_date = (
+                            (commit_info.get("committer") or {}).get("date")
+                            or (commit_info.get("author") or {}).get("date")
+                            or ""
+                        )
+                        if raw_date:
+                            _LOGGER.debug("commit message date %s/%s@%s: %s", owner, repo, version, raw_date[:10])
+                            return raw_date[:10]
+    except Exception as exc:
+        _LOGGER.debug("commit message search failed %s/%s: %s", owner, repo, exc)
 
     return None

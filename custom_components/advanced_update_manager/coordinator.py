@@ -127,8 +127,10 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
 
                             # Layer 4 — config.yaml commit date (works for add-ons without releases/tags)
                             if not release_date and update_type == UPDATE_TYPE_ADDON:
+                                slug = entry.unique_id.removeprefix("core_") if entry and entry.unique_id else None
                                 release_date = await fetch_addon_config_date(
-                                    session, owner, repo, new_version, self.github_token, tag_prefix
+                                    session, owner, repo, new_version, self.github_token,
+                                    subpath=tag_prefix, slug=slug,
                                 )
 
                     # Layer 5 — HA official add-on registry (home-assistant/addons monorepo)
