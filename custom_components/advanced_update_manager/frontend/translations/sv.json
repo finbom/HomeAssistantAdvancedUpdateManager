@@ -23,7 +23,7 @@
   "confirm_body_backup": "Vill du säkerhetskopiera och uppdatera",
   "backup_type_label": "Backup-typ",
   "backup_type_full": "Fullständig backup",
-  "backup_type_addon_only": "Komponentbackup only",
+  "backup_type_addon_only": "Enbart tillägg",
   "hacs_backup_notice": "Endast fullständig backup möjlig",
   "btn_cancel": "Avbryt",
   "update_count_one": "uppdatering",

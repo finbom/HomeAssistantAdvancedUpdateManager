@@ -16,7 +16,7 @@
         "title": "Advanced Update Manager Options",
         "data": {
           "show_in_sidebar": "Show in sidebar",
-          "default_backup_type": "Default backup type for Core & Apps"
+          "default_backup_type": "Default backup type"
         }
       }
     }
@@ -25,7 +25,7 @@
     "default_backup_type": {
       "options": {
         "full": "Full backup",
-        "addon_only": "Component backup only"
+        "addon_only": "Addons only"
       }
     }
   }

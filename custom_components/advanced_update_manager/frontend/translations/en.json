@@ -23,7 +23,7 @@
   "confirm_body_backup": "Do you want to back up and update",
   "backup_type_label": "Backup type",
   "backup_type_full": "Full backup",
-  "backup_type_addon_only": "Component backup only",
+  "backup_type_addon_only": "Addons only",
   "hacs_backup_notice": "Only full backup possible",
   "btn_cancel": "Cancel",
   "update_count_one": "update",

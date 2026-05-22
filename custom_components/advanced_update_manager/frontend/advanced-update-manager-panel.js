@@ -170,7 +170,10 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   }
 
   _setBackupType(type) {
-    if (this._confirm) this._confirm.backupType = type;
+    if (this._confirm) {
+      this._confirm.backupType = type;
+      this._render();
+    }
   }
 
   _requestRestart() {
@@ -484,7 +487,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         <label class="backup-type-label">${this._tr("backup_type_label", "Backup type")}</label>
         <select class="backup-type-select" onchange="this.getRootNode().host._setBackupType(this.value)">
           <option value="full" ${fullSelected}>${this._tr("backup_type_full", "Full backup")}</option>
-          <option value="addon_only" ${addonSelected}>${this._tr("backup_type_addon_only", "Component backup only")}</option>
+          <option value="addon_only" ${addonSelected}>${this._tr("backup_type_addon_only", "Addons only")}</option>
         </select>
       </div>`;
   }
