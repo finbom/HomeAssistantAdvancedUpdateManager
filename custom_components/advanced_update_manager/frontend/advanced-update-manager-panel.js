@@ -157,23 +157,14 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
 
   _requestInstall(entityId, backup) {
     const update = this._updates.find((u) => u.entity_id === entityId);
-    const backupType = this._config.default_backup_type || "full";
     this._confirm = {
       type: "install",
       entityId,
       backup,
-      backupType,
       updateType: update ? update.type : "other",
       title: update ? update.title : entityId,
     };
     this._render();
-  }
-
-  _setBackupType(type) {
-    if (this._confirm) {
-      this._confirm.backupType = type;
-      this._render();
-    }
   }
 
   _requestRestart() {
@@ -186,13 +177,13 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     this._render();
   }
 
-  async _doInstall() {
-    const { entityId, backup, backupType } = this._confirm;
+  async _doInstall(backupType) {
+    const { entityId, backup } = this._confirm;
     this._confirm = null;
     this._installing.add(entityId);
     if (backup) this._installingWithBackup.add(entityId);
     this._render();
-    await this._install(entityId, backup, backupType);
+    await this._install(entityId, backup, backupType || "full");
   }
 
   async _doRestart() {
@@ -472,26 +463,6 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       </div>`;
   }
 
-  _renderBackupTypeSelector() {
-    const { updateType, backupType } = this._confirm;
-    if (updateType === "hacs") {
-      return `
-        <div class="backup-type-row">
-          <span class="backup-type-notice">ℹ ${this._tr("hacs_backup_notice", "Only full backup possible")}</span>
-        </div>`;
-    }
-    const fullActive = backupType === "full" ? " active" : "";
-    const addonActive = backupType === "addon_only" ? " active" : "";
-    return `
-      <div class="backup-type-row">
-        <label class="backup-type-label">${this._tr("backup_type_label", "Backup type")}</label>
-        <div class="backup-type-toggle">
-          <button class="backup-type-btn${fullActive}" onclick="this.getRootNode().host._setBackupType('full')">${this._tr("backup_type_full", "Full backup")}</button>
-          <button class="backup-type-btn${addonActive}" onclick="this.getRootNode().host._setBackupType('addon_only')">${this._tr("backup_type_addon_only", "Addons only")}</button>
-        </div>
-      </div>`;
-  }
-
   _renderConfirmModal() {
     if (!this._confirm) return "";
 
@@ -523,19 +494,31 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         </div>`;
     }
 
-    const { title, backup } = this._confirm;
-    const bodyKey = backup ? "confirm_body_backup" : "confirm_body_update";
-    const bodyDefault = backup ? "Do you want to back up and update" : "Do you want to update";
-    const actionLabel = backup ? this._tr("btn_backup_update", "Backup + Update") : this._tr("btn_update", "Update");
+    const { title, backup, updateType } = this._confirm;
+    if (!backup) {
+      return `
+        <div class="confirm-overlay">
+          <div class="confirm-dialog">
+            <p class="confirm-title">${this._tr("confirm_title", "Confirm update")}</p>
+            <p class="confirm-body">${this._tr("confirm_body_update", "Do you want to update")} <strong>${this._escHtml(title)}</strong>?</p>
+            <div class="confirm-actions">
+              <button class="btn btn-skip" onclick="this.getRootNode().host._cancelConfirm()">${this._tr("btn_cancel", "Cancel")}</button>
+              <button class="btn btn-update" onclick="this.getRootNode().host._doInstall()">${this._tr("btn_update", "Update")}</button>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    const isHacs = updateType === "hacs";
     return `
       <div class="confirm-overlay">
         <div class="confirm-dialog">
           <p class="confirm-title">${this._tr("confirm_title", "Confirm update")}</p>
-          <p class="confirm-body">${this._tr(bodyKey, bodyDefault)} <strong>${this._escHtml(title)}</strong>?</p>
-          ${backup ? this._renderBackupTypeSelector() : ""}
+          <p class="confirm-body">${this._tr("confirm_body_backup", "Do you want to back up and update")} <strong>${this._escHtml(title)}</strong>?</p>
           <div class="confirm-actions">
             <button class="btn btn-skip" onclick="this.getRootNode().host._cancelConfirm()">${this._tr("btn_cancel", "Cancel")}</button>
-            <button class="btn ${backup ? "btn-backup" : "btn-update"}" onclick="this.getRootNode().host._doInstall()">${actionLabel}</button>
+            ${!isHacs ? `<button class="btn btn-backup" onclick="this.getRootNode().host._doInstall('addon_only')">${this._tr("btn_addon_backup_install", "Addon backup + Install")}</button>` : ""}
+            <button class="btn btn-backup" onclick="this.getRootNode().host._doInstall('full')">${this._tr("btn_full_backup_install", "Full backup + Install")}</button>
           </div>
         </div>
       </div>`;
@@ -642,13 +625,6 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         .confirm-title { margin: 0 0 12px; font-size: 1.1rem; font-weight: 500; color: var(--primary-text-color); }
         .confirm-body { margin: 0 0 16px; color: var(--secondary-text-color); line-height: 1.5; }
         .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
-        .backup-type-row { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
-        .backup-type-label { font-size: 0.875rem; color: var(--secondary-text-color); white-space: nowrap; }
-        .backup-type-toggle { display: flex; flex: 1; border: 1px solid var(--divider-color, #e0e0e0); border-radius: 4px; overflow: hidden; }
-        .backup-type-btn { flex: 1; padding: 6px 10px; border: none; border-right: 1px solid var(--divider-color, #e0e0e0); background: transparent; color: var(--secondary-text-color); font-size: 0.875rem; cursor: pointer; }
-        .backup-type-btn:last-child { border-right: none; }
-        .backup-type-btn.active { background: var(--primary-color, #03a9f4); color: var(--text-primary-color, white); font-weight: 500; }
-        .backup-type-notice { font-size: 0.8rem; color: var(--secondary-text-color); font-style: italic; }
       </style>
       <div class="header">
         <h1>${this._tr("panel_title", "Update Manager")}</h1>
