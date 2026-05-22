@@ -22,3 +22,7 @@ CORE_ENTITY_ID = "update.home_assistant_core_update"
 HAOS_ENTITY_ID = "update.home_assistant_operating_system_update"
 
 CONF_SHOW_IN_SIDEBAR = "show_in_sidebar"
+CONF_DEFAULT_BACKUP_TYPE = "default_backup_type"
+
+BACKUP_TYPE_FULL = "full"
+BACKUP_TYPE_ADDON_ONLY = "addon_only"

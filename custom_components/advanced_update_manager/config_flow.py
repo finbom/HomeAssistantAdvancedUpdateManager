@@ -4,8 +4,15 @@ from __future__ import annotations
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
+from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig
 
-from .const import CONF_SHOW_IN_SIDEBAR, DOMAIN
+from .const import (
+    BACKUP_TYPE_FULL,
+    BACKUP_TYPE_ADDON_ONLY,
+    CONF_DEFAULT_BACKUP_TYPE,
+    CONF_SHOW_IN_SIDEBAR,
+    DOMAIN,
+)
 
 
 class AdvancedUpdateManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -35,10 +42,17 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             return self.async_create_entry(title="", data=user_input)
 
         show_in_sidebar = self._config_entry.options.get(CONF_SHOW_IN_SIDEBAR, True)
+        default_backup_type = self._config_entry.options.get(CONF_DEFAULT_BACKUP_TYPE, BACKUP_TYPE_FULL)
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema({
                 vol.Required(CONF_SHOW_IN_SIDEBAR, default=show_in_sidebar): bool,
+                vol.Required(CONF_DEFAULT_BACKUP_TYPE, default=default_backup_type): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[BACKUP_TYPE_FULL, BACKUP_TYPE_ADDON_ONLY],
+                        translation_key=CONF_DEFAULT_BACKUP_TYPE,
+                    )
+                ),
             }),
         )

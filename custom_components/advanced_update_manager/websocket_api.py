@@ -6,7 +6,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
-from .const import DOMAIN
+from .const import BACKUP_TYPE_FULL, BACKUP_TYPE_ADDON_ONLY, CONF_DEFAULT_BACKUP_TYPE, DOMAIN
 
 
 def async_setup(hass: HomeAssistant) -> None:
@@ -15,6 +15,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_skip_update)
     websocket_api.async_register_command(hass, ws_get_skipped_updates)
     websocket_api.async_register_command(hass, ws_get_restart_info)
+    websocket_api.async_register_command(hass, ws_get_config)
 
 
 @websocket_api.websocket_command({
@@ -32,17 +33,49 @@ async def ws_get_updates(hass: HomeAssistant, connection, msg: dict) -> None:
     vol.Required("type"): f"{DOMAIN}/install_update",
     vol.Required("entity_id"): str,
     vol.Optional("backup", default=False): bool,
+    vol.Optional("backup_type", default=BACKUP_TYPE_FULL): vol.In([BACKUP_TYPE_FULL, BACKUP_TYPE_ADDON_ONLY]),
 })
 @websocket_api.async_response
 async def ws_install_update(hass: HomeAssistant, connection, msg: dict) -> None:
-    """Trigger update.install for the given entity."""
-    await hass.services.async_call(
-        "update",
-        "install",
-        {"entity_id": msg["entity_id"], "backup": msg["backup"]},
-        blocking=False,
-    )
+    """Trigger update.install for the given entity, with optional full backup first."""
+    backup = msg["backup"]
+    backup_type = msg.get("backup_type", BACKUP_TYPE_FULL)
+    entity_id = msg["entity_id"]
+
+    if backup and backup_type == BACKUP_TYPE_FULL:
+        async def _full_backup_then_install() -> None:
+            if hass.services.has_service("backup", "create"):
+                await hass.services.async_call("backup", "create", {}, blocking=True)
+            await hass.services.async_call(
+                "update",
+                "install",
+                {"entity_id": entity_id, "backup": False},
+                blocking=False,
+            )
+
+        hass.async_create_task(_full_backup_then_install())
+    else:
+        await hass.services.async_call(
+            "update",
+            "install",
+            {"entity_id": entity_id, "backup": backup},
+            blocking=False,
+        )
+
     connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/get_config",
+})
+@websocket_api.async_response
+async def ws_get_config(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Return integration options relevant to the frontend."""
+    entries = hass.config_entries.async_entries(DOMAIN)
+    default_backup_type = BACKUP_TYPE_FULL
+    if entries:
+        default_backup_type = entries[0].options.get(CONF_DEFAULT_BACKUP_TYPE, BACKUP_TYPE_FULL)
+    connection.send_result(msg["id"], {"default_backup_type": default_backup_type})
 
 
 @websocket_api.websocket_command({

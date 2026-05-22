@@ -12,9 +12,11 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     this._error = null;
     this._unsubscribe = null;
     this._initialized = false;
-    this._confirm = null;  // { type: "install"|"restart"|"skip", entityId?, backup?, title? }
+    this._confirm = null;  // { type: "install"|"restart"|"skip", entityId?, backup?, backupType?, updateType?, title? }
     this._installing = new Set();
+    this._installingWithBackup = new Set();
     this._t = {};
+    this._config = {};
     this._restartRequired = false;
     this._showSkipped = false;
     this._skippedUpdates = [];
@@ -36,7 +38,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   async _init() {
     this._render();
     await this._loadTranslations();
-    await Promise.all([this._fetchUpdates(), this._fetchRestartInfo()]);
+    await Promise.all([this._fetchUpdates(), this._fetchRestartInfo(), this._loadConfig()]);
     this._subscribeStateChanges();
   }
 
@@ -54,6 +56,17 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       } catch {
         this._t = {};
       }
+    }
+  }
+
+  async _loadConfig() {
+    try {
+      const result = await this._hass.connection.sendMessagePromise({
+        type: "advanced_update_manager/get_config",
+      });
+      this._config = result;
+    } catch {
+      this._config = { default_backup_type: "full" };
     }
   }
 
@@ -102,6 +115,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         if (oldState === "on" && newState !== "on") {
           this._updates = this._updates.filter((u) => u.entity_id !== entityId);
           this._installing.delete(entityId);
+          this._installingWithBackup.delete(entityId);
           this._render();
         } else if (newState === "on" && oldState !== "on") {
           this._fetchUpdates();
@@ -143,8 +157,20 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
 
   _requestInstall(entityId, backup) {
     const update = this._updates.find((u) => u.entity_id === entityId);
-    this._confirm = { type: "install", entityId, backup, title: update ? update.title : entityId };
+    const backupType = this._config.default_backup_type || "full";
+    this._confirm = {
+      type: "install",
+      entityId,
+      backup,
+      backupType,
+      updateType: update ? update.type : "other",
+      title: update ? update.title : entityId,
+    };
     this._render();
+  }
+
+  _setBackupType(type) {
+    if (this._confirm) this._confirm.backupType = type;
   }
 
   _requestRestart() {
@@ -158,11 +184,12 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   }
 
   async _doInstall() {
-    const { entityId, backup } = this._confirm;
+    const { entityId, backup, backupType } = this._confirm;
     this._confirm = null;
     this._installing.add(entityId);
+    if (backup) this._installingWithBackup.add(entityId);
     this._render();
-    await this._install(entityId, backup);
+    await this._install(entityId, backup, backupType);
   }
 
   async _doRestart() {
@@ -180,16 +207,18 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     }
   }
 
-  async _install(entityId, backup) {
+  async _install(entityId, backup, backupType) {
     try {
       await this._hass.connection.sendMessagePromise({
         type: "advanced_update_manager/install_update",
         entity_id: entityId,
         backup,
+        backup_type: backupType || "full",
       });
     } catch (e) {
       console.error("[AdvancedUpdateManager] install failed", e);
       this._installing.delete(entityId);
+      this._installingWithBackup.delete(entityId);
       this._render();
     }
   }
@@ -280,6 +309,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
 
   _renderUpdateRow(u, showTypeBadge = false) {
     const isInstalling = this._installing.has(u.entity_id) || u.in_progress;
+    const isBackupInstall = this._installingWithBackup.has(u.entity_id);
     const dateDisplay = u.release_date || "—";
     const releaseLink = u.release_url
       ? `<a href="${u.release_url}" target="_blank" rel="noopener" class="release-link" title="${this._tr("release_notes_title", "View release notes")}">↗</a>`
@@ -287,6 +317,10 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     const typeBadge = showTypeBadge
       ? `<span class="type-chip" style="background:${this._typeColor(u.type)}">${this._typeLabel(u.type)}</span>`
       : "";
+
+    const installingText = isBackupInstall
+      ? this._tr("installing_backup", "Creating backup & installing update…")
+      : this._tr("installing", "Installing…");
 
     return `
       <tr class="update-row${isInstalling ? " installing" : ""}">
@@ -302,7 +336,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         <td class="action-cell">
           ${isInstalling
             ? `<div class="installing-state">
-                 <span class="badge in-progress-badge">${this._tr("installing", "Installing…")}</span>
+                 <span class="badge in-progress-badge">${installingText}</span>
                  <div class="progress-bar"></div>
                </div>`
             : `
@@ -435,6 +469,26 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       </div>`;
   }
 
+  _renderBackupTypeSelector() {
+    const { updateType, backupType } = this._confirm;
+    if (updateType === "hacs") {
+      return `
+        <div class="backup-type-row">
+          <span class="backup-type-notice">ℹ ${this._tr("hacs_backup_notice", "Only full backup possible")}</span>
+        </div>`;
+    }
+    const fullSelected = backupType === "full" ? "selected" : "";
+    const addonSelected = backupType === "addon_only" ? "selected" : "";
+    return `
+      <div class="backup-type-row">
+        <label class="backup-type-label">${this._tr("backup_type_label", "Backup type")}</label>
+        <select class="backup-type-select" onchange="this.getRootNode().host._setBackupType(this.value)">
+          <option value="full" ${fullSelected}>${this._tr("backup_type_full", "Full backup")}</option>
+          <option value="addon_only" ${addonSelected}>${this._tr("backup_type_addon_only", "Component backup only")}</option>
+        </select>
+      </div>`;
+  }
+
   _renderConfirmModal() {
     if (!this._confirm) return "";
 
@@ -475,6 +529,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         <div class="confirm-dialog">
           <p class="confirm-title">${this._tr("confirm_title", "Confirm update")}</p>
           <p class="confirm-body">${this._tr(bodyKey, bodyDefault)} <strong>${this._escHtml(title)}</strong>?</p>
+          ${backup ? this._renderBackupTypeSelector() : ""}
           <div class="confirm-actions">
             <button class="btn btn-skip" onclick="this.getRootNode().host._cancelConfirm()">${this._tr("btn_cancel", "Cancel")}</button>
             <button class="btn ${backup ? "btn-backup" : "btn-update"}" onclick="this.getRootNode().host._doInstall()">${actionLabel}</button>
@@ -580,10 +635,14 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           .header-actions { width: 100%; justify-content: flex-start; }
         }
         .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
-        .confirm-dialog { background: var(--card-background-color, white); border-radius: 8px; padding: 24px; max-width: 400px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
+        .confirm-dialog { background: var(--card-background-color, white); border-radius: 8px; padding: 24px; max-width: 420px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
         .confirm-title { margin: 0 0 12px; font-size: 1.1rem; font-weight: 500; color: var(--primary-text-color); }
-        .confirm-body { margin: 0 0 20px; color: var(--secondary-text-color); line-height: 1.5; }
+        .confirm-body { margin: 0 0 16px; color: var(--secondary-text-color); line-height: 1.5; }
         .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+        .backup-type-row { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+        .backup-type-label { font-size: 0.875rem; color: var(--secondary-text-color); white-space: nowrap; }
+        .backup-type-select { flex: 1; padding: 6px 10px; border: 1px solid var(--divider-color, #e0e0e0); border-radius: 4px; background: var(--card-background-color, white); color: var(--primary-text-color); font-size: 0.875rem; cursor: pointer; }
+        .backup-type-notice { font-size: 0.8rem; color: var(--secondary-text-color); font-style: italic; }
       </style>
       <div class="header">
         <h1>${this._tr("panel_title", "Update Manager")}</h1>

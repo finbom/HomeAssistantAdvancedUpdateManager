@@ -15,8 +15,17 @@
       "init": {
         "title": "Advanced Update Manager Options",
         "data": {
-          "show_in_sidebar": "Show in sidebar"
+          "show_in_sidebar": "Show in sidebar",
+          "default_backup_type": "Default backup type for Core & Apps"
         }
+      }
+    }
+  },
+  "selector": {
+    "default_backup_type": {
+      "options": {
+        "full": "Full backup",
+        "addon_only": "Component backup only"
       }
     }
   }
