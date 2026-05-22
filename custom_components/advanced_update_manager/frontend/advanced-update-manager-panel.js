@@ -480,15 +480,15 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           <span class="backup-type-notice">ℹ ${this._tr("hacs_backup_notice", "Only full backup possible")}</span>
         </div>`;
     }
-    const fullSelected = backupType === "full" ? "selected" : "";
-    const addonSelected = backupType === "addon_only" ? "selected" : "";
+    const fullActive = backupType === "full" ? " active" : "";
+    const addonActive = backupType === "addon_only" ? " active" : "";
     return `
       <div class="backup-type-row">
         <label class="backup-type-label">${this._tr("backup_type_label", "Backup type")}</label>
-        <select class="backup-type-select" onchange="this.getRootNode().host._setBackupType(this.value)">
-          <option value="full" ${fullSelected}>${this._tr("backup_type_full", "Full backup")}</option>
-          <option value="addon_only" ${addonSelected}>${this._tr("backup_type_addon_only", "Addons only")}</option>
-        </select>
+        <div class="backup-type-toggle">
+          <button class="backup-type-btn${fullActive}" onclick="this.getRootNode().host._setBackupType('full')">${this._tr("backup_type_full", "Full backup")}</button>
+          <button class="backup-type-btn${addonActive}" onclick="this.getRootNode().host._setBackupType('addon_only')">${this._tr("backup_type_addon_only", "Addons only")}</button>
+        </div>
       </div>`;
   }
 
@@ -644,7 +644,10 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
         .backup-type-row { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
         .backup-type-label { font-size: 0.875rem; color: var(--secondary-text-color); white-space: nowrap; }
-        .backup-type-select { flex: 1; padding: 6px 10px; border: 1px solid var(--divider-color, #e0e0e0); border-radius: 4px; background: var(--card-background-color, white); color: var(--primary-text-color); font-size: 0.875rem; cursor: pointer; }
+        .backup-type-toggle { display: flex; flex: 1; border: 1px solid var(--divider-color, #e0e0e0); border-radius: 4px; overflow: hidden; }
+        .backup-type-btn { flex: 1; padding: 6px 10px; border: none; border-right: 1px solid var(--divider-color, #e0e0e0); background: transparent; color: var(--secondary-text-color); font-size: 0.875rem; cursor: pointer; }
+        .backup-type-btn:last-child { border-right: none; }
+        .backup-type-btn.active { background: var(--primary-color, #03a9f4); color: var(--text-primary-color, white); font-weight: 500; }
         .backup-type-notice { font-size: 0.8rem; color: var(--secondary-text-color); font-style: italic; }
       </style>
       <div class="header">
