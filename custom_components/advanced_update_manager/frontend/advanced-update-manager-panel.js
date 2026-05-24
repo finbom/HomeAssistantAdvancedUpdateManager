@@ -614,7 +614,8 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           .update-row { border-bottom: 1px solid var(--divider-color, #e0e0e0); padding: 10px 0; }
           .update-row:last-child { border-bottom: none; }
           .update-row.installing { opacity: 0.85; }
-          .action-cell { padding-top: 8px; white-space: normal; }
+          .action-cell { padding-top: 8px; white-space: normal; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+          .action-cell .btn { margin-right: 0; width: 100%; text-align: center; box-sizing: border-box; }
           .progress-bar { min-width: 0; width: 100%; }
           .restart-banner { flex-wrap: wrap; }
           .header-actions { width: 100%; justify-content: flex-start; }
