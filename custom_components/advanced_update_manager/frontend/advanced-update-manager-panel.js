@@ -616,7 +616,6 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           .update-row.installing { opacity: 0.85; }
           .action-cell { padding-top: 8px; white-space: normal; }
           .progress-bar { min-width: 0; width: 100%; }
-          .btn-backup { display: none; }
           .restart-banner { flex-wrap: wrap; }
           .header-actions { width: 100%; justify-content: flex-start; }
         }
