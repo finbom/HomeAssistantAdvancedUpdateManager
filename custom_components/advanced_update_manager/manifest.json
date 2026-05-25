@@ -4,7 +4,7 @@
   "version": "0.3.7",
   "documentation": "https://github.com/finbom/HomeAssistantAdvancedUpdateManager",
   "issue_tracker": "https://github.com/finbom/HomeAssistantAdvancedUpdateManager/issues",
-  "dependencies": ["panel_custom"],
+  "dependencies": ["http", "panel_custom"],
   "codeowners": ["@finbom"],
   "requirements": [],
   "iot_class": "local_polling",
