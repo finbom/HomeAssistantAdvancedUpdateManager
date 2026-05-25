@@ -610,11 +610,11 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         @media (max-width: 640px) {
           .update-table thead { display: none; }
           .update-table, .update-table tbody, .update-row { display: block; }
-          .update-table td { display: block; padding: 3px 16px; border: none; }
-          .update-row { border-bottom: 1px solid var(--divider-color, #e0e0e0); padding: 14px 0; }
+          .update-table td { display: block; padding: 4px 16px; border: none; }
+          .update-row { border-bottom: 3px solid var(--divider-color, #e0e0e0); padding: 20px 0; }
           .update-row:last-child { border-bottom: none; }
           .update-row.installing { opacity: 0.85; }
-          .action-cell { padding-top: 10px; white-space: normal; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+          .action-cell { padding-top: 12px; white-space: normal; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
           .action-cell .btn { margin-right: 0; width: 100%; text-align: center; box-sizing: border-box; }
           .progress-bar { min-width: 0; width: 100%; }
           .restart-banner { flex-wrap: wrap; }
