@@ -218,7 +218,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   }
 
   _navigateToHaUpdates() {
-    history.pushState(null, "", "/update");
+    history.pushState(null, "", "/config/updates");
     window.dispatchEvent(new Event("location-changed"));
   }
 
