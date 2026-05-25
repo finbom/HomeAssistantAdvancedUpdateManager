@@ -139,32 +139,18 @@ async def ws_get_restart_info(hass: HomeAssistant, connection, msg: dict) -> Non
     """Return whether a restart is pending."""
     restart_required = False
 
-    # Check HA repair issues (HA 2022.9+)
+    # Check HA repair issues — HACS creates issue_id="restart_required_{repo_id}_{ref}"
     try:
         from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
         registry = ir.async_get(hass)
-        for (domain, issue_id) in registry.issues:
-            _LOGGER.debug("AUM restart: issue %s/%s", domain, issue_id)
-            if issue_id.lower() == "restart_required":
+        for issue in registry.issues.values():
+            _LOGGER.debug("AUM restart: issue %s/%s", issue.domain, issue.issue_id)
+            if issue.issue_id.startswith("restart_required"):
+                _LOGGER.debug("AUM restart: found restart issue %s/%s", issue.domain, issue.issue_id)
                 restart_required = True
                 break
     except Exception:  # noqa: BLE001
         pass
-
-    # Check persistent notifications by known IDs only
-    if not restart_required:
-        _RESTART_NOTIF_IDS = frozenset({
-            "homeassistant_restart",
-            "home_assistant_restart",
-            "hacs_restart",
-            "restart_required",
-        })
-        for state in hass.states.async_all("persistent_notification"):
-            notif_id = state.entity_id.removeprefix("persistent_notification.").lower()
-            _LOGGER.debug("AUM restart: notification %s", notif_id)
-            if notif_id in _RESTART_NOTIF_IDS:
-                restart_required = True
-                break
 
     _LOGGER.debug("AUM restart_required=%s", restart_required)
     connection.send_result(msg["id"], {"restart_required": restart_required})
