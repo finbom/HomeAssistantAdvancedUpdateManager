@@ -1,8 +1,10 @@
 """Advanced Update Manager — custom panel with enriched update info."""
 from __future__ import annotations
 
+import json
 import logging
 import os
+from pathlib import Path
 
 from homeassistant.components.frontend import async_remove_panel
 from homeassistant.components.http import StaticPathConfig
@@ -26,6 +28,7 @@ from .storage import UpdateDateStorage
 from . import websocket_api
 
 _LOGGER = logging.getLogger(__name__)
+_VERSION = json.loads((Path(__file__).parent / "manifest.json").read_text())["version"]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -60,7 +63,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         webcomponent_name=PANEL_COMPONENT,
         sidebar_title=PANEL_TITLE if show_in_sidebar else None,
         sidebar_icon=PANEL_ICON if show_in_sidebar else None,
-        js_url=f"/{DOMAIN}_panel/{PANEL_JS}",
+        js_url=f"/{DOMAIN}_panel/{PANEL_JS}?v={_VERSION}",
         require_admin=False,
     )
 
