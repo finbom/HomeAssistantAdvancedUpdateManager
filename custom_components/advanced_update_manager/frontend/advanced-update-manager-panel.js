@@ -219,7 +219,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
 
   _navigateToHaUpdates() {
     history.pushState(null, "", "/config/updates");
-    window.dispatchEvent(new Event("location-changed"));
+    window.dispatchEvent(new CustomEvent("location-changed", { bubbles: true, cancelable: false, detail: { replace: false } }));
   }
 
   _requestSkip(entityId) {
