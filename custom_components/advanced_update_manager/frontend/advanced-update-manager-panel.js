@@ -117,6 +117,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           this._installing.delete(entityId);
           this._installingWithBackup.delete(entityId);
           this._render();
+          this._fetchRestartInfo();
         } else if (newState === "on" && oldState !== "on") {
           this._fetchUpdates();
         } else if (newState === "on" && oldState === "on") {

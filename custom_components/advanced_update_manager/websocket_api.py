@@ -1,12 +1,15 @@
 """WebSocket API commands for Advanced Update Manager."""
 from __future__ import annotations
 
+import logging
 import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .const import BACKUP_TYPE_FULL, BACKUP_TYPE_ADDON_ONLY, CONF_DEFAULT_BACKUP_TYPE, DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def async_setup(hass: HomeAssistant) -> None:
@@ -140,25 +143,25 @@ async def ws_get_restart_info(hass: HomeAssistant, connection, msg: dict) -> Non
     try:
         from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
         registry = ir.async_get(hass)
-        for (_, issue_id) in registry.issues:
-            if issue_id.lower().endswith("restart_required"):
+        for (domain, issue_id) in registry.issues:
+            if "restart" in issue_id.lower():
+                _LOGGER.debug("AUM restart: found issue %s/%s", domain, issue_id)
                 restart_required = True
                 break
     except Exception:  # noqa: BLE001
         pass
 
-    # Fallback: check persistent notifications by known IDs
+    # Check persistent notifications — match on ID or content containing "restart"
     if not restart_required:
-        _RESTART_NOTIF_IDS = frozenset({
-            "homeassistant_restart",
-            "home_assistant_restart",
-            "hacs_restart",
-            "restart_required",
-        })
         for state in hass.states.async_all("persistent_notification"):
-            notif_id = state.entity_id.removeprefix("persistent_notification.")
-            if notif_id in _RESTART_NOTIF_IDS:
+            notif_id = state.entity_id.removeprefix("persistent_notification.").lower()
+            title = (state.attributes.get("title") or "").lower()
+            message = (state.attributes.get("message") or "").lower()
+            _LOGGER.debug("AUM restart: checking notification %s title=%r", notif_id, title)
+            if "restart" in notif_id or "restart" in title or "restart" in message:
+                _LOGGER.debug("AUM restart: found notification %s", notif_id)
                 restart_required = True
                 break
 
+    _LOGGER.debug("AUM restart_required=%s", restart_required)
     connection.send_result(msg["id"], {"restart_required": restart_required})
