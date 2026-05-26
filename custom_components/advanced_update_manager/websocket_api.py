@@ -140,13 +140,21 @@ async def ws_get_restart_info(hass: HomeAssistant, connection, msg: dict) -> Non
     restart_required = False
 
     # Check HA repair issues — HACS creates issue_id="restart_required_{repo_id}_{ref}"
+    # Only match active (not dismissed) issues in the hacs domain
     try:
         from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
         registry = ir.async_get(hass)
         for issue in registry.issues.values():
-            _LOGGER.debug("AUM restart: issue %s/%s", issue.domain, issue.issue_id)
-            if issue.issue_id.startswith("restart_required"):
-                _LOGGER.debug("AUM restart: found restart issue %s/%s", issue.domain, issue.issue_id)
+            _LOGGER.debug(
+                "AUM restart: issue %s/%s dismissed=%s",
+                issue.domain, issue.issue_id, issue.dismissed_version,
+            )
+            if (
+                issue.domain == "hacs"
+                and issue.issue_id.startswith("restart_required")
+                and issue.dismissed_version is None
+            ):
+                _LOGGER.debug("AUM restart: active restart issue found: %s/%s", issue.domain, issue.issue_id)
                 restart_required = True
                 break
     except Exception:  # noqa: BLE001
