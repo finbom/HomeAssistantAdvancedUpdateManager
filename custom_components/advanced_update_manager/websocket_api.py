@@ -138,27 +138,46 @@ async def ws_get_skipped_updates(hass: HomeAssistant, connection, msg: dict) -> 
 async def ws_get_restart_info(hass: HomeAssistant, connection, msg: dict) -> None:
     """Return whether a restart is pending."""
     restart_required = False
+    hacs_check_done = False
 
-    # Check HA repair issues — HACS creates issue_id="restart_required_{repo_id}_{ref}"
-    # Only match active (not dismissed) issues in the hacs domain
+    # Primary: ask HACS runtime data directly — repo.pending_restart reflects current state
+    # and is reset on startup, unlike repair issues which persist on disk across restarts.
     try:
-        from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
-        registry = ir.async_get(hass)
-        for issue in registry.issues.values():
-            _LOGGER.debug(
-                "AUM restart: issue %s/%s dismissed=%s",
-                issue.domain, issue.issue_id, issue.dismissed_version,
-            )
-            if (
-                issue.domain == "hacs"
-                and issue.issue_id.startswith("restart_required")
-                and issue.dismissed_version is None
-            ):
-                _LOGGER.debug("AUM restart: active restart issue found: %s/%s", issue.domain, issue.issue_id)
-                restart_required = True
-                break
-    except Exception:  # noqa: BLE001
-        pass
+        hacs = hass.data.get("hacs")
+        if hacs is not None:
+            repos = getattr(hacs, "repositories", None)
+            if repos is not None:
+                for repo in getattr(repos, "list_all", []):
+                    if getattr(repo, "pending_restart", False):
+                        repo_name = getattr(getattr(repo, "data", None), "full_name", "?")
+                        _LOGGER.debug("AUM restart: HACS repo %s has pending_restart", repo_name)
+                        restart_required = True
+                        break
+                hacs_check_done = True
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("AUM restart: HACS direct check failed: %s", err)
 
-    _LOGGER.debug("AUM restart_required=%s", restart_required)
+    # Fallback: repair issues (only when HACS runtime data was unavailable)
+    # Repair issues can be stale — they survive HA restarts even when no restart is needed.
+    if not hacs_check_done:
+        try:
+            from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
+            registry = ir.async_get(hass)
+            for issue in registry.issues.values():
+                _LOGGER.debug(
+                    "AUM restart: fallback issue %s/%s dismissed=%s",
+                    issue.domain, issue.issue_id, issue.dismissed_version,
+                )
+                if (
+                    issue.domain == "hacs"
+                    and issue.issue_id.startswith("restart_required")
+                    and issue.dismissed_version is None
+                ):
+                    _LOGGER.debug("AUM restart: active repair issue found: %s/%s", issue.domain, issue.issue_id)
+                    restart_required = True
+                    break
+        except Exception:  # noqa: BLE001
+            pass
+
+    _LOGGER.debug("AUM restart_required=%s (hacs_check_done=%s)", restart_required, hacs_check_done)
     connection.send_result(msg["id"], {"restart_required": restart_required})
