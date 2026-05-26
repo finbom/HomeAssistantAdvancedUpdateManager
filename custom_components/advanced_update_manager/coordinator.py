@@ -145,7 +145,7 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                             github_url = "https://github.com/home-assistant/addons"
 
                     if update_type == UPDATE_TYPE_ADDON:
-                        _LOGGER.warning(
+                        _LOGGER.debug(
                             "AUM add-on lookup: entity=%s release_url=%r supervisor_url=%r github_url=%r",
                             entity_id, release_url, supervisor_url, github_url,
                         )
@@ -155,11 +155,11 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                         if info:
                             owner, repo = info
                             tag_prefix = extract_monorepo_subpath(github_url) if update_type == UPDATE_TYPE_ADDON else None
-                            _LOGGER.warning("AUM add-on repo: %s/%s subpath=%r", owner, repo, tag_prefix)
+                            _LOGGER.debug("AUM add-on repo: %s/%s subpath=%r", owner, repo, tag_prefix)
                             release_date = await fetch_release_date(
                                 session, owner, repo, new_version, self.github_token, tag_prefix
                             )
-                            _LOGGER.warning("AUM fetch_release_date result: %r", release_date)
+                            _LOGGER.debug("AUM fetch_release_date result: %r", release_date)
 
                             # Layer 4 — config.yaml commit date (works for add-ons without releases/tags)
                             if not release_date and update_type == UPDATE_TYPE_ADDON:
@@ -168,9 +168,9 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                                     session, owner, repo, new_version, self.github_token,
                                     subpath=tag_prefix, slug=slug,
                                 )
-                                _LOGGER.warning("AUM fetch_addon_config_date result: %r (slug=%r)", release_date, slug)
+                                _LOGGER.debug("AUM fetch_addon_config_date result: %r (slug=%r)", release_date, slug)
                     elif update_type == UPDATE_TYPE_ADDON:
-                        _LOGGER.warning(
+                        _LOGGER.debug(
                             "AUM: no GitHub URL for %s — date lookup skipped entirely",
                             entity_id,
                         )
