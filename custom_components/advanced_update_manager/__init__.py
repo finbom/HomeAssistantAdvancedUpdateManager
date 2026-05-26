@@ -1,6 +1,7 @@
 """Advanced Update Manager — custom panel with enriched update info."""
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import os
@@ -10,13 +11,16 @@ from homeassistant.components.frontend import async_remove_panel
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.panel_custom import async_register_panel
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
+    CONF_HISTORY_KEEP_DAYS,
     CONF_SHOW_IN_SIDEBAR,
     DOMAIN,
+    HISTORY_KEEP_DAYS_DEFAULT,
     PANEL_COMPONENT,
     PANEL_ICON,
     PANEL_JS,
@@ -45,6 +49,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     storage = UpdateDateStorage(hass)
     await storage.async_load()
 
+    keep_days = entry.options.get(CONF_HISTORY_KEEP_DAYS, HISTORY_KEEP_DAYS_DEFAULT)
+    await storage.async_cleanup(keep_days)
+
     coordinator = UpdateManagerCoordinator(hass, storage)
     hass.data[DOMAIN]["coordinator"] = coordinator
     hass.data[DOMAIN]["storage"] = storage
@@ -69,11 +76,101 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
 
-    websocket_api.async_setup(hass)
+    # Listen for update installs (on → off transitions on update.* entities)
+    async def _on_state_changed(event: Event) -> None:
+        entity_id = event.data.get("entity_id", "")
+        if not entity_id.startswith("update."):
+            return
+        old_state = event.data.get("old_state")
+        new_state = event.data.get("new_state")
+        if not old_state or not new_state:
+            return
+        if old_state.state != "on" or new_state.state != "off":
+            return
 
+        domain_storage = hass.data.get(DOMAIN, {}).get("storage")
+        if not domain_storage:
+            return
+
+        registry = er.async_get(hass)
+        reg_entry = registry.async_get(entity_id)
+        attrs_new = new_state.attributes or {}
+        attrs_old = old_state.attributes or {}
+        title = (
+            attrs_new.get("title")
+            or (reg_entry and (reg_entry.name or reg_entry.original_name))
+            or entity_id.removeprefix("update.")
+        )
+        update_type = websocket_api._classify_entity(entity_id, reg_entry)
+        from_version = attrs_old.get("installed_version") or ""
+        to_version = attrs_new.get("installed_version") or attrs_old.get("latest_version") or ""
+        install_date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+
+        await domain_storage.async_add_install_event(
+            entity_id, title, update_type, from_version, to_version, install_date
+        )
+        _LOGGER.debug("AUM tracked install: %s %s → %s", entity_id, from_version, to_version)
+
+    entry.async_on_unload(hass.bus.async_listen("state_changed", _on_state_changed))
+
+    websocket_api.async_setup(hass)
     await coordinator.async_refresh()
 
+    # Seed history from recorder (one-time, runs in background)
+    if not storage.is_history_seeded():
+        hass.async_create_task(_async_seed_history_from_recorder(hass, storage))
+
     return True
+
+
+async def _async_seed_history_from_recorder(hass: HomeAssistant, storage: UpdateDateStorage) -> None:
+    """One-time retroactive scan of recorder to populate install history."""
+    events: list[dict] = []
+    try:
+        from homeassistant.components.recorder import get_instance  # noqa: PLC0415
+        from homeassistant.components.recorder.history import get_significant_states  # noqa: PLC0415
+        from homeassistant.util import dt as dt_util  # noqa: PLC0415
+
+        instance = get_instance(hass)
+        start_time = dt_util.utcnow() - datetime.timedelta(days=365)
+        entity_ids = [s.entity_id for s in hass.states.async_all("update")]
+
+        if entity_ids:
+            states_dict = await instance.async_add_executor_job(
+                get_significant_states, hass, start_time, None, entity_ids
+            )
+            registry = er.async_get(hass)
+            for entity_id, state_list in states_dict.items():
+                reg_entry = registry.async_get(entity_id)
+                for i in range(1, len(state_list)):
+                    prev = state_list[i - 1]
+                    curr = state_list[i]
+                    if getattr(prev, "state", None) != "on" or getattr(curr, "state", None) != "off":
+                        continue
+                    prev_attrs = getattr(prev, "attributes", {}) or {}
+                    curr_attrs = getattr(curr, "attributes", {}) or {}
+                    changed = getattr(curr, "last_changed", None)
+                    if not changed:
+                        continue
+                    title = (
+                        curr_attrs.get("title")
+                        or (reg_entry and (reg_entry.name or reg_entry.original_name))
+                        or entity_id.removeprefix("update.")
+                    )
+                    events.append({
+                        "entity_id": entity_id,
+                        "title": title,
+                        "type": websocket_api._classify_entity(entity_id, reg_entry),
+                        "from_version": prev_attrs.get("installed_version") or "",
+                        "to_version": curr_attrs.get("installed_version") or prev_attrs.get("latest_version") or "",
+                        "install_date": changed.strftime("%Y-%m-%d"),
+                    })
+
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("AUM history seed: recorder unavailable: %s", err)
+
+    added = await storage.async_seed_history(events)
+    _LOGGER.debug("AUM history seeded from recorder: %d events added", added)
 
 
 async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -83,8 +180,6 @@ async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     async_remove_panel(hass, PANEL_URL_PATH)
-    # Keep static_paths_registered flag — static paths survive HA process lifetime
-    # and cannot be re-registered after a config entry reload.
     static_flag = hass.data[DOMAIN].get("static_paths_registered")
     hass.data[DOMAIN].clear()
     if static_flag:

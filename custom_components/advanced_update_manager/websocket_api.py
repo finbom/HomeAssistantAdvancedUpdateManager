@@ -1,7 +1,6 @@
 """WebSocket API commands for Advanced Update Manager."""
 from __future__ import annotations
 
-import datetime
 import logging
 import voluptuous as vol
 from homeassistant.components import websocket_api
@@ -9,8 +8,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .const import (
-    BACKUP_TYPE_FULL, BACKUP_TYPE_ADDON_ONLY, CONF_DEFAULT_BACKUP_TYPE, DOMAIN,
-    CORE_ENTITY_ID, HAOS_ENTITY_ID,
+    BACKUP_TYPE_FULL, BACKUP_TYPE_ADDON_ONLY, CONF_DEFAULT_BACKUP_TYPE,
+    CONF_HISTORY_KEEP_DAYS, DOMAIN,
+    CORE_ENTITY_ID, HAOS_ENTITY_ID, HISTORY_KEEP_DAYS_DEFAULT,
     UPDATE_TYPE_ADDON, UPDATE_TYPE_CORE, UPDATE_TYPE_DEVICE,
     UPDATE_TYPE_HACS, UPDATE_TYPE_HAOS, UPDATE_TYPE_OTHER,
 )
@@ -32,34 +32,6 @@ def _classify_entity(entity_id: str, entry: er.RegistryEntry | None) -> str:
             return UPDATE_TYPE_DEVICE
     return UPDATE_TYPE_OTHER
 
-
-async def _get_last_install_dates(hass: HomeAssistant, entity_ids: list[str]) -> dict[str, str]:
-    """Return the most recent install date (on→off transition) per entity from recorder."""
-    if not entity_ids:
-        return {}
-    result: dict[str, str] = {}
-    try:
-        from homeassistant.components.recorder import get_instance  # noqa: PLC0415
-        from homeassistant.components.recorder.history import get_significant_states  # noqa: PLC0415
-        from homeassistant.util import dt as dt_util  # noqa: PLC0415
-
-        instance = get_instance(hass)
-        start_time = dt_util.utcnow() - datetime.timedelta(days=365)
-        states_dict = await instance.async_add_executor_job(
-            get_significant_states, hass, start_time, None, entity_ids
-        )
-        for entity_id, state_list in states_dict.items():
-            for i in range(len(state_list) - 1, 0, -1):
-                prev = state_list[i - 1]
-                curr = state_list[i]
-                if getattr(prev, "state", None) == "on" and getattr(curr, "state", None) == "off":
-                    changed = getattr(curr, "last_changed", None)
-                    if changed:
-                        result[entity_id] = changed.strftime("%Y-%m-%d")
-                    break
-    except Exception as err:  # noqa: BLE001
-        _LOGGER.debug("AUM install dates: %s", err)
-    return result
 
 
 def async_setup(hass: HomeAssistant) -> None:
@@ -128,9 +100,17 @@ async def ws_get_config(hass: HomeAssistant, connection, msg: dict) -> None:
     """Return integration options relevant to the frontend."""
     entries = hass.config_entries.async_entries(DOMAIN)
     default_backup_type = BACKUP_TYPE_FULL
+    history_keep_days = HISTORY_KEEP_DAYS_DEFAULT
     if entries:
         default_backup_type = entries[0].options.get(CONF_DEFAULT_BACKUP_TYPE, BACKUP_TYPE_FULL)
-    connection.send_result(msg["id"], {"default_backup_type": default_backup_type})
+        history_keep_days = entries[0].options.get(CONF_HISTORY_KEEP_DAYS, HISTORY_KEEP_DAYS_DEFAULT)
+    storage = (hass.data.get(DOMAIN) or {}).get("storage")
+    storage_size_bytes = storage.get_storage_size_bytes() if storage else 0
+    connection.send_result(msg["id"], {
+        "default_backup_type": default_backup_type,
+        "history_keep_days": history_keep_days,
+        "storage_size_bytes": storage_size_bytes,
+    })
 
 
 @websocket_api.websocket_command({
@@ -268,10 +248,9 @@ async def ws_get_installed(hass: HomeAssistant, connection, msg: dict) -> None:
             "install_date": "",
         })
 
-    entity_ids = [item["entity_id"] for item in installed]
-    install_dates = await _get_last_install_dates(hass, entity_ids)
     for item in installed:
-        item["install_date"] = install_dates.get(item["entity_id"], "")
+        event = storage.get_latest_install(item["entity_id"]) if storage else None
+        item["install_date"] = event["install_date"] if event else ""
 
     installed.sort(key=lambda x: x["title"].lower())
     connection.send_result(msg["id"], {"installed": installed})
@@ -282,63 +261,28 @@ async def ws_get_installed(hass: HomeAssistant, connection, msg: dict) -> None:
 })
 @websocket_api.async_response
 async def ws_get_history(hass: HomeAssistant, connection, msg: dict) -> None:
-    """Return update install events from recorder history (on→off transitions)."""
+    """Return update install events from AUM's own persistent storage."""
+    storage = (hass.data.get(DOMAIN) or {}).get("storage")
     events: list[dict] = []
-    oldest_dt: datetime.datetime | None = None
-    recorder_available = False
+    oldest_date: str | None = None
 
-    try:
-        from homeassistant.components.recorder import get_instance  # noqa: PLC0415
-        from homeassistant.components.recorder.history import get_significant_states  # noqa: PLC0415
-        from homeassistant.util import dt as dt_util  # noqa: PLC0415
+    if storage:
+        history = storage.get_install_history()  # newest first
+        for e in history:
+            events.append({
+                "entity_id": e["entity_id"],
+                "title": e["title"],
+                "type": e.get("type", "other"),
+                "from_version": e.get("from_version", ""),
+                "to_version": e.get("to_version", ""),
+                "date": e["install_date"],
+                "datetime": e["install_date"] + "T12:00:00+00:00",
+            })
+        if events:
+            oldest_date = events[-1]["date"]  # last item is oldest (list is newest-first)
 
-        instance = get_instance(hass)
-        start_time = dt_util.utcnow() - datetime.timedelta(days=365)
-        entity_ids = [s.entity_id for s in hass.states.async_all("update")]
-
-        if entity_ids:
-            states_dict = await instance.async_add_executor_job(
-                get_significant_states, hass, start_time, None, entity_ids
-            )
-            recorder_available = True
-            registry = er.async_get(hass)
-
-            for entity_id, state_list in states_dict.items():
-                entry = registry.async_get(entity_id)
-                for i in range(1, len(state_list)):
-                    prev = state_list[i - 1]
-                    curr = state_list[i]
-                    if getattr(prev, "state", None) != "on" or getattr(curr, "state", None) != "off":
-                        continue
-                    prev_attrs = getattr(prev, "attributes", {}) or {}
-                    curr_attrs = getattr(curr, "attributes", {}) or {}
-                    title = (
-                        curr_attrs.get("title")
-                        or (entry and (entry.name or entry.original_name))
-                        or entity_id.removeprefix("update.")
-                    )
-                    changed = getattr(curr, "last_changed", None)
-                    if not changed:
-                        continue
-                    if oldest_dt is None or changed < oldest_dt:
-                        oldest_dt = changed
-                    events.append({
-                        "entity_id": entity_id,
-                        "title": title,
-                        "from_version": prev_attrs.get("installed_version") or "",
-                        "to_version": curr_attrs.get("installed_version") or prev_attrs.get("latest_version") or "",
-                        "date": changed.strftime("%Y-%m-%d"),
-                        "datetime": changed.isoformat(),
-                    })
-        else:
-            recorder_available = True
-
-    except Exception as err:  # noqa: BLE001
-        _LOGGER.debug("AUM history: recorder query failed: %s", err)
-
-    events.sort(key=lambda x: x["datetime"], reverse=True)
     connection.send_result(msg["id"], {
         "events": events,
-        "oldest_date": oldest_dt.strftime("%Y-%m-%d") if oldest_dt else None,
-        "recorder_available": recorder_available,
+        "oldest_date": oldest_date,
+        "recorder_available": True,
     })

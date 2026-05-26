@@ -591,26 +591,28 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       </div>`;
   }
 
+  _formatBytes(bytes) {
+    if (!bytes) return "0 B";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   _renderHistory() {
     if (this._historyLoading) {
       return `<div class="loading">${this._tr("loading", "Fetching updates…")}</div>`;
     }
-    if (!this._historyRecorderAvailable) {
-      return `<div class="history-info">${this._tr("history_no_recorder", "Recorder is not available. Enable the recorder integration to track install history.")}</div>`;
-    }
 
-    let infoNote;
-    if (this._historyOldestDate) {
-      const oldest = new Date(this._historyOldestDate);
-      const days = Math.round((Date.now() - oldest.getTime()) / 86400000);
-      infoNote = `${this._tr("history_info_prefix", "Showing installs since")} ${this._historyOldestDate} (${days} ${this._tr("history_info_days", "days")}) — ${this._tr("history_info_suffix", "depth depends on your recorder settings")}`;
-    } else {
-      infoNote = this._tr("history_recorder_note", "History depth depends on your recorder settings (purge_keep_days)");
-    }
-
+    const keepDays = this._config.history_keep_days ?? 365;
+    const retention = keepDays > 0
+      ? `${keepDays} ${this._tr("history_info_days", "days")}`
+      : this._tr("history_keep_forever", "Forever");
+    const storageSize = this._formatBytes(this._config.storage_size_bytes || 0);
+    const count = this._historyEvents.length;
+    const infoNote = `${count} ${this._tr("history_installs_tracked", "installs tracked by AUM")} — ${this._tr("history_retention_label", "Retention:")} ${retention} — ${this._tr("storage_size_label", "Storage:")} ${storageSize}`;
     const infoHtml = `<div class="history-info">${infoNote}</div>`;
 
-    if (this._historyEvents.length === 0) {
+    if (count === 0) {
       return `${infoHtml}<div class="empty-state">
         <p>${this._tr("history_empty", "No install history found.")}</p>
       </div>`;
@@ -618,7 +620,10 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
 
     const rows = this._historyEvents.map((e) => `
       <tr>
-        <td class="name-cell"><span class="title">${this._escHtml(e.title)}</span></td>
+        <td class="name-cell">
+          <span class="type-chip" style="background:${this._typeColor(e.type || "other")}">${this._typeLabel(e.type || "other")}</span>
+          <span class="title">${this._escHtml(e.title)}</span>
+        </td>
         <td class="version-cell">
           <span class="version-from">${this._escHtml(e.from_version)}</span>
           <span class="arrow">→</span>

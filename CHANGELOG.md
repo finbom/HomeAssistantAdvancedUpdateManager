@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.18] - 2026-05-26
+### Added
+- Persistent install history stored in HA Storage (`/config/.storage/advanced_update_manager`) — no longer depends on recorder purge settings
+- Retroactive seeding: on first startup AUM scans recorder history (up to 365 days back) to pre-populate the history register
+- Configurable history retention: 30 days / 90 days / 180 days / 1 year / 2 years / Forever (default: 1 year) — set in integration options
+- Storage size display in the Latest installed tab info bar
+- Type badge (Core / HA OS / Apps / HACS / Device / Other) now shown in the Latest installed tab as well
+- `ws_get_config` now returns `history_keep_days` and `storage_size_bytes`
+
+### Changed
+- Latest installed tab now reads from AUM's own persistent storage instead of querying recorder on every load
+- Currently installed tab install dates now come from AUM storage instead of recorder
+
 ## [0.3.17] - 2026-05-26
 ### Added
 - "Currently installed" view now shows type badge, release date, and install date columns

@@ -51,6 +51,10 @@
   "history_info_days": "dagar",
   "history_info_suffix": "djup beror på din recorder-konfiguration",
   "history_recorder_note": "Historikdjup beror på din recorder-konfiguration (purge_keep_days)",
+  "history_installs_tracked": "installationer spårade av AUM",
+  "history_retention_label": "Kvarhållning:",
+  "history_keep_forever": "För alltid",
+  "storage_size_label": "Lagring:"
   "restart_banner": "Home Assistant behöver startas om för att de senaste ändringarna ska träda i kraft.",
   "restart_btn": "Starta om Home Assistant",
   "confirm_restart_title": "Bekräfta omstart",

@@ -51,6 +51,10 @@
   "history_info_days": "days",
   "history_info_suffix": "depth depends on your recorder settings",
   "history_recorder_note": "History depth depends on your recorder settings (purge_keep_days)",
+  "history_installs_tracked": "installs tracked by AUM",
+  "history_retention_label": "Retention:",
+  "history_keep_forever": "Forever",
+  "storage_size_label": "Storage:"
   "restart_banner": "Home Assistant needs to be restarted for recent changes to take effect.",
   "restart_btn": "Restart Home Assistant",
   "confirm_restart_title": "Confirm restart",

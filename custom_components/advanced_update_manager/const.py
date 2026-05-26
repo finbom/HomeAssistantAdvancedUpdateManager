@@ -23,6 +23,8 @@ HAOS_ENTITY_ID = "update.home_assistant_operating_system_update"
 
 CONF_SHOW_IN_SIDEBAR = "show_in_sidebar"
 CONF_DEFAULT_BACKUP_TYPE = "default_backup_type"
+CONF_HISTORY_KEEP_DAYS = "history_keep_days"
+HISTORY_KEEP_DAYS_DEFAULT = 365
 
 BACKUP_TYPE_FULL = "full"
 BACKUP_TYPE_ADDON_ONLY = "addon_only"

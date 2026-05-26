@@ -10,8 +10,10 @@ from .const import (
     BACKUP_TYPE_FULL,
     BACKUP_TYPE_ADDON_ONLY,
     CONF_DEFAULT_BACKUP_TYPE,
+    CONF_HISTORY_KEEP_DAYS,
     CONF_SHOW_IN_SIDEBAR,
     DOMAIN,
+    HISTORY_KEEP_DAYS_DEFAULT,
 )
 
 
@@ -39,10 +41,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            # SelectSelector returns strings; convert keep_days back to int
+            data = dict(user_input)
+            data[CONF_HISTORY_KEEP_DAYS] = int(data.get(CONF_HISTORY_KEEP_DAYS, HISTORY_KEEP_DAYS_DEFAULT))
+            return self.async_create_entry(title="", data=data)
 
         show_in_sidebar = self._config_entry.options.get(CONF_SHOW_IN_SIDEBAR, True)
         default_backup_type = self._config_entry.options.get(CONF_DEFAULT_BACKUP_TYPE, BACKUP_TYPE_FULL)
+        history_keep_days = self._config_entry.options.get(CONF_HISTORY_KEEP_DAYS, HISTORY_KEEP_DAYS_DEFAULT)
 
         return self.async_show_form(
             step_id="init",
@@ -52,6 +58,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     SelectSelectorConfig(
                         options=[BACKUP_TYPE_FULL, BACKUP_TYPE_ADDON_ONLY],
                         translation_key=CONF_DEFAULT_BACKUP_TYPE,
+                    )
+                ),
+                vol.Required(CONF_HISTORY_KEEP_DAYS, default=str(history_keep_days)): SelectSelector(
+                    SelectSelectorConfig(
+                        options=["30", "90", "180", "365", "730", "0"],
+                        translation_key=CONF_HISTORY_KEEP_DAYS,
                     )
                 ),
             }),
