@@ -1,0 +1,24 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create integration zip
+        run: |
+          cd custom_components
+          zip -r ../advanced_update_manager.zip advanced_update_manager/
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: advanced_update_manager.zip
