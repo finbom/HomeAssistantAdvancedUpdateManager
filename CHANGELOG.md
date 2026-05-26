@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.16] - 2026-05-26
+### Added
+- Three-tab navigation: **Pending updates**, **Currently installed**, **Latest installed**
+- "Currently installed" view: shows all managed update entities with their current installed version (reads live HA state, no extra storage)
+- "Latest installed" view: shows recent install events from HA's recorder history (on→off state transitions on `update.*` entities), with info note showing date range and a note that depth depends on recorder settings
+- New WebSocket endpoints: `get_installed` and `get_history`
+- Sort buttons and Show/Hide skipped toggle now only shown on the Pending tab
+- Refresh button works on all tabs
+
 ## [0.3.15] - 2026-05-26
 ### Fixed
 - Add-on date-lookup log messages downgraded from `warning` to `debug` — no longer fills the HA log on every 30-minute refresh

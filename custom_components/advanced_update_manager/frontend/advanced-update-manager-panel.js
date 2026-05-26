@@ -22,6 +22,13 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     this._skippedUpdates = [];
     this._sortBy = "type";   // "type" | "date"
     this._sortDir = "asc";   // "asc" | "desc"
+    this._view = "pending";  // "pending" | "installed" | "history"
+    this._installed = [];
+    this._installedLoading = false;
+    this._historyEvents = [];
+    this._historyOldestDate = null;
+    this._historyRecorderAvailable = true;
+    this._historyLoading = false;
   }
 
   set hass(hass) {
@@ -103,6 +110,65 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     this._render();
   }
 
+  async _fetchInstalled() {
+    this._installedLoading = true;
+    this._render();
+    try {
+      const result = await this._hass.connection.sendMessagePromise({
+        type: "advanced_update_manager/get_installed",
+      });
+      this._installed = result.installed || [];
+    } catch (e) {
+      console.error("[AdvancedUpdateManager] installed fetch failed", e);
+      this._installed = [];
+    }
+    this._installedLoading = false;
+    this._render();
+  }
+
+  async _fetchHistory() {
+    this._historyLoading = true;
+    this._render();
+    try {
+      const result = await this._hass.connection.sendMessagePromise({
+        type: "advanced_update_manager/get_history",
+      });
+      this._historyEvents = result.events || [];
+      this._historyOldestDate = result.oldest_date || null;
+      this._historyRecorderAvailable = result.recorder_available !== false;
+    } catch (e) {
+      console.error("[AdvancedUpdateManager] history fetch failed", e);
+      this._historyEvents = [];
+      this._historyRecorderAvailable = false;
+    }
+    this._historyLoading = false;
+    this._render();
+  }
+
+  async _setView(view) {
+    if (this._view === view) return;
+    this._view = view;
+    this._render();
+    if (view === "installed" && this._installed.length === 0 && !this._installedLoading) {
+      await this._fetchInstalled();
+    } else if (view === "history" && this._historyEvents.length === 0 && !this._historyLoading) {
+      await this._fetchHistory();
+    }
+  }
+
+  async _refresh() {
+    if (this._view === "pending") {
+      await Promise.all([this._fetchUpdates(), this._fetchRestartInfo()]);
+    } else if (this._view === "installed") {
+      this._installed = [];
+      await this._fetchInstalled();
+    } else if (this._view === "history") {
+      this._historyEvents = [];
+      this._historyOldestDate = null;
+      await this._fetchHistory();
+    }
+  }
+
   _subscribeStateChanges() {
     this._unsubscribe = this._hass.connection.subscribeEvents((event) => {
       const entityId = event.data?.entity_id;
@@ -118,8 +184,13 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           this._installingWithBackup.delete(entityId);
           this._render();
           this._fetchRestartInfo();
+          // Invalidate cached installed/history so they reload on next view
+          this._installed = [];
+          this._historyEvents = [];
+          this._historyOldestDate = null;
         } else if (newState === "on" && oldState !== "on") {
           this._fetchUpdates();
+          this._installed = [];
         } else if (newState === "on" && oldState === "on") {
           this._fetchUpdates();
         }
@@ -424,6 +495,83 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       </div>`;
   }
 
+  _renderInstalled() {
+    if (this._installedLoading) {
+      return `<div class="loading">${this._tr("loading", "Fetching updates…")}</div>`;
+    }
+    if (this._installed.length === 0) {
+      return `<div class="empty-state">
+        <span class="empty-icon">✓</span>
+        <p>${this._tr("installed_empty", "No installed updates found.")}</p>
+      </div>`;
+    }
+    const rows = this._installed.map((u) => `
+      <tr>
+        <td class="name-cell"><span class="title">${this._escHtml(u.title)}</span></td>
+        <td class="version-cell"><span class="version-to">${this._escHtml(u.installed_version)}</span></td>
+      </tr>`).join("");
+    return `
+      <div class="group">
+        <table class="update-table">
+          <thead><tr>
+            <th>${this._tr("col_name", "Name")}</th>
+            <th>${this._tr("col_installed_version", "Installed version")}</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  _renderHistory() {
+    if (this._historyLoading) {
+      return `<div class="loading">${this._tr("loading", "Fetching updates…")}</div>`;
+    }
+    if (!this._historyRecorderAvailable) {
+      return `<div class="history-info">${this._tr("history_no_recorder", "Recorder is not available. Enable the recorder integration to track install history.")}</div>`;
+    }
+
+    let infoNote;
+    if (this._historyOldestDate) {
+      const oldest = new Date(this._historyOldestDate);
+      const days = Math.round((Date.now() - oldest.getTime()) / 86400000);
+      infoNote = `${this._tr("history_info_prefix", "Showing installs since")} ${this._historyOldestDate} (${days} ${this._tr("history_info_days", "days")}) — ${this._tr("history_info_suffix", "depth depends on your recorder settings")}`;
+    } else {
+      infoNote = this._tr("history_recorder_note", "History depth depends on your recorder settings (purge_keep_days)");
+    }
+
+    const infoHtml = `<div class="history-info">${infoNote}</div>`;
+
+    if (this._historyEvents.length === 0) {
+      return `${infoHtml}<div class="empty-state">
+        <p>${this._tr("history_empty", "No install history found.")}</p>
+      </div>`;
+    }
+
+    const rows = this._historyEvents.map((e) => `
+      <tr>
+        <td class="name-cell"><span class="title">${this._escHtml(e.title)}</span></td>
+        <td class="version-cell">
+          <span class="version-from">${this._escHtml(e.from_version)}</span>
+          <span class="arrow">→</span>
+          <span class="version-to">${this._escHtml(e.to_version)}</span>
+        </td>
+        <td class="date-cell">${e.date}</td>
+      </tr>`).join("");
+
+    return `
+      ${infoHtml}
+      <div class="group">
+        <table class="update-table">
+          <thead><tr>
+            <th>${this._tr("col_name", "Name")}</th>
+            <th>${this._tr("col_version", "Version")}</th>
+            <th>${this._tr("col_install_date", "Install date")}</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }
+
   _renderSkippedSection() {
     if (!this._showSkipped) return "";
     if (this._skippedUpdates.length === 0) {
@@ -546,12 +694,17 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   }
 
   _render() {
+    const isPending = this._view === "pending";
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; padding: 16px; font-family: var(--paper-font-body1_-_font-family, sans-serif); }
-        .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
+        .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
         .header h1 { margin: 0; font-size: 1.5rem; font-weight: 500; color: var(--primary-text-color); }
         .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .tab-bar { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 2px solid var(--divider-color, #e0e0e0); }
+        .tab-btn { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: 8px 18px; cursor: pointer; font-size: 0.875rem; color: var(--secondary-text-color); white-space: nowrap; transition: color 0.15s; }
+        .tab-btn:hover { color: var(--primary-text-color); }
+        .tab-btn.active { color: var(--primary-color, #03a9f4); border-bottom-color: var(--primary-color, #03a9f4); font-weight: 600; }
         .sort-group { display: flex; align-items: center; gap: 4px; }
         .sort-label { font-size: 0.8rem; color: var(--secondary-text-color); white-space: nowrap; }
         .sort-btn { background: none; border: 1px solid var(--divider-color, #e0e0e0); color: var(--secondary-text-color); border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 0.8rem; white-space: nowrap; transition: all 0.15s; }
@@ -575,6 +728,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         .toggle-skipped-btn.active { border-color: var(--primary-color, #03a9f4); color: var(--primary-color, #03a9f4); }
         .loading, .error { text-align: center; padding: 48px; color: var(--secondary-text-color); }
         .error { color: var(--error-color, #db4437); }
+        .history-info { padding: 10px 16px; background: var(--secondary-background-color, #f5f5f5); border-radius: 6px; font-size: 0.8rem; color: var(--secondary-text-color); margin-bottom: 16px; line-height: 1.5; }
         .group { margin-bottom: 24px; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); background: var(--card-background-color, white); }
         .group-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--secondary-background-color, #f5f5f5); }
         .group-badge { color: white; padding: 2px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -582,7 +736,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         .update-table { width: 100%; border-collapse: collapse; }
         .update-table th { text-align: left; padding: 10px 16px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--secondary-text-color); border-bottom: 1px solid var(--divider-color, #e0e0e0); }
         .update-table td { padding: 12px 16px; border-bottom: 1px solid var(--divider-color, #e0e0e0); vertical-align: middle; }
-        .update-row:last-child td { border-bottom: none; }
+        .update-row:last-child td, tr:last-child td { border-bottom: none; }
         .update-row.installing { opacity: 0.85; }
         .installing-state { display: flex; flex-direction: column; gap: 6px; }
         .progress-bar { position: relative; height: 3px; min-width: 100px; background: var(--divider-color, #e0e0e0); border-radius: 2px; overflow: hidden; }
@@ -621,6 +775,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           .progress-bar { min-width: 0; width: 100%; }
           .restart-banner { flex-wrap: wrap; }
           .header-actions { width: 100%; justify-content: flex-start; }
+          .tab-bar { overflow-x: auto; }
         }
         .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
         .confirm-dialog { background: var(--card-background-color, white); border-radius: 8px; padding: 24px; max-width: 420px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
@@ -631,19 +786,28 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       <div class="header">
         <h1>${this._tr("panel_title", "Update Manager")}</h1>
         <div class="header-actions">
-          ${this._renderSortButtons()}
+          ${isPending ? this._renderSortButtons() : ""}
           <button class="ha-update-btn" onclick="this.getRootNode().host._navigateToHaUpdates()">${this._tr("ha_updates_btn", "HA Updates ↗")}</button>
-          <button class="toggle-skipped-btn${this._showSkipped ? " active" : ""}" onclick="this.getRootNode().host._toggleSkipped()">${this._showSkipped ? this._tr("hide_skipped_btn", "Hide skipped") : this._tr("show_skipped_btn", "Show skipped")}</button>
-          <button class="refresh-btn" onclick="this.getRootNode().host._fetchUpdates()">${this._tr("refresh_btn", "Refresh list")}</button>
+          ${isPending ? `<button class="toggle-skipped-btn${this._showSkipped ? " active" : ""}" onclick="this.getRootNode().host._toggleSkipped()">${this._showSkipped ? this._tr("hide_skipped_btn", "Hide skipped") : this._tr("show_skipped_btn", "Show skipped")}</button>` : ""}
+          <button class="refresh-btn" onclick="this.getRootNode().host._refresh()">${this._tr("refresh_btn", "Refresh list")}</button>
         </div>
       </div>
-      ${this._renderRestartBanner()}
-      ${this._loading
-        ? `<div class="loading">${this._tr("loading", "Fetching updates…")}</div>`
-        : this._error
-          ? `<div class="error">${this._error}</div>`
-          : this._renderUpdates()}
-      ${this._renderSkippedSection()}
+      <div class="tab-bar">
+        <button class="tab-btn${this._view === "pending" ? " active" : ""}" onclick="this.getRootNode().host._setView('pending')">${this._tr("tab_pending", "Pending updates")}</button>
+        <button class="tab-btn${this._view === "installed" ? " active" : ""}" onclick="this.getRootNode().host._setView('installed')">${this._tr("tab_installed", "Currently installed")}</button>
+        <button class="tab-btn${this._view === "history" ? " active" : ""}" onclick="this.getRootNode().host._setView('history')">${this._tr("tab_history", "Latest installed")}</button>
+      </div>
+      ${isPending ? this._renderRestartBanner() : ""}
+      ${isPending
+        ? (this._loading
+            ? `<div class="loading">${this._tr("loading", "Fetching updates…")}</div>`
+            : this._error
+              ? `<div class="error">${this._error}</div>`
+              : this._renderUpdates())
+        : ""}
+      ${isPending ? this._renderSkippedSection() : ""}
+      ${this._view === "installed" ? this._renderInstalled() : ""}
+      ${this._view === "history" ? this._renderHistory() : ""}
       ${this._renderConfirmModal()}
     `;
   }

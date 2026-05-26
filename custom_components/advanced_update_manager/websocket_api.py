@@ -1,6 +1,7 @@
 """WebSocket API commands for Advanced Update Manager."""
 from __future__ import annotations
 
+import datetime
 import logging
 import voluptuous as vol
 from homeassistant.components import websocket_api
@@ -19,6 +20,8 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_skipped_updates)
     websocket_api.async_register_command(hass, ws_get_restart_info)
     websocket_api.async_register_command(hass, ws_get_config)
+    websocket_api.async_register_command(hass, ws_get_installed)
+    websocket_api.async_register_command(hass, ws_get_history)
 
 
 @websocket_api.websocket_command({
@@ -181,3 +184,98 @@ async def ws_get_restart_info(hass: HomeAssistant, connection, msg: dict) -> Non
 
     _LOGGER.debug("AUM restart_required=%s (hacs_check_done=%s)", restart_required, hacs_check_done)
     connection.send_result(msg["id"], {"restart_required": restart_required})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/get_installed",
+})
+@websocket_api.async_response
+async def ws_get_installed(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Return all update entities that are currently up to date (state=off)."""
+    registry = er.async_get(hass)
+    installed = []
+    for state in hass.states.async_all("update"):
+        if state.state != "off":
+            continue
+        attrs = state.attributes
+        entity_id = state.entity_id
+        entry = registry.async_get(entity_id)
+        title = (
+            attrs.get("title")
+            or (entry and (entry.name or entry.original_name))
+            or entity_id.removeprefix("update.")
+        )
+        installed.append({
+            "entity_id": entity_id,
+            "title": title,
+            "installed_version": attrs.get("installed_version") or "",
+        })
+    installed.sort(key=lambda x: x["title"].lower())
+    connection.send_result(msg["id"], {"installed": installed})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/get_history",
+})
+@websocket_api.async_response
+async def ws_get_history(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Return update install events from recorder history (on→off transitions)."""
+    events: list[dict] = []
+    oldest_dt: datetime.datetime | None = None
+    recorder_available = False
+
+    try:
+        from homeassistant.components.recorder import get_instance  # noqa: PLC0415
+        from homeassistant.components.recorder.history import get_significant_states  # noqa: PLC0415
+        from homeassistant.util import dt as dt_util  # noqa: PLC0415
+
+        instance = get_instance(hass)
+        start_time = dt_util.utcnow() - datetime.timedelta(days=365)
+        entity_ids = [s.entity_id for s in hass.states.async_all("update")]
+
+        if entity_ids:
+            states_dict = await instance.async_add_executor_job(
+                get_significant_states, hass, start_time, None, entity_ids
+            )
+            recorder_available = True
+            registry = er.async_get(hass)
+
+            for entity_id, state_list in states_dict.items():
+                entry = registry.async_get(entity_id)
+                for i in range(1, len(state_list)):
+                    prev = state_list[i - 1]
+                    curr = state_list[i]
+                    if getattr(prev, "state", None) != "on" or getattr(curr, "state", None) != "off":
+                        continue
+                    prev_attrs = getattr(prev, "attributes", {}) or {}
+                    curr_attrs = getattr(curr, "attributes", {}) or {}
+                    title = (
+                        curr_attrs.get("title")
+                        or (entry and (entry.name or entry.original_name))
+                        or entity_id.removeprefix("update.")
+                    )
+                    changed = getattr(curr, "last_changed", None)
+                    if not changed:
+                        continue
+                    if oldest_dt is None or changed < oldest_dt:
+                        oldest_dt = changed
+                    events.append({
+                        "entity_id": entity_id,
+                        "title": title,
+                        "from_version": prev_attrs.get("installed_version") or "",
+                        "to_version": curr_attrs.get("installed_version") or prev_attrs.get("latest_version") or "",
+                        "date": changed.strftime("%Y-%m-%d"),
+                        "datetime": changed.isoformat(),
+                    })
+        else:
+            recorder_available = True
+
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("AUM history: recorder query failed: %s", err)
+
+    events.sort(key=lambda x: x["datetime"], reverse=True)
+    connection.send_result(msg["id"], {
+        "events": events,
+        "oldest_date": oldest_dt.strftime("%Y-%m-%d") if oldest_dt else None,
+        "recorder_available": recorder_available,
+    })
