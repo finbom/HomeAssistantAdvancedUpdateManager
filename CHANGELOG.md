@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.17] - 2026-05-26
+### Added
+- "Currently installed" view now shows type badge, release date, and install date columns
+- Sort controls on the "Currently installed" tab: by Name, Type, Release date, Install date (ascending/descending)
+- Install date is read from recorder history (most recent on→off transition per entity)
+- Release date is read from the integration's persistent cache (same source as the Pending tab)
+
 ## [0.3.16] - 2026-05-26
 ### Added
 - Three-tab navigation: **Pending updates**, **Currently installed**, **Latest installed**

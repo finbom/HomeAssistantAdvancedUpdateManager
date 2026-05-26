@@ -25,6 +25,8 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     this._view = "pending";  // "pending" | "installed" | "history"
     this._installed = [];
     this._installedLoading = false;
+    this._installedSortBy = "type";   // "name" | "type" | "release_date" | "install_date"
+    this._installedSortDir = "asc";
     this._historyEvents = [];
     this._historyOldestDate = null;
     this._historyRecorderAvailable = true;
@@ -223,6 +225,16 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     } else {
       this._sortBy = field;
       this._sortDir = field === "date" ? "desc" : "asc";
+    }
+    this._render();
+  }
+
+  _setInstalledSort(field) {
+    if (this._installedSortBy === field) {
+      this._installedSortDir = this._installedSortDir === "asc" ? "desc" : "asc";
+    } else {
+      this._installedSortBy = field;
+      this._installedSortDir = (field === "install_date" || field === "release_date") ? "desc" : "asc";
     }
     this._render();
   }
@@ -495,6 +507,24 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       </div>`;
   }
 
+  _renderInstalledSortButtons() {
+    const arrow = this._installedSortDir === "asc" ? "↑" : "↓";
+    const fields = [
+      { id: "name",         label: this._tr("col_name", "Name") },
+      { id: "type",         label: this._tr("col_type", "Type") },
+      { id: "release_date", label: this._tr("col_release_date", "Release date") },
+      { id: "install_date", label: this._tr("col_install_date", "Install date") },
+    ];
+    return `
+      <div class="sort-group">
+        <span class="sort-label">${this._tr("sort_label", "Sort")}:</span>
+        ${fields.map(f => {
+          const active = this._installedSortBy === f.id;
+          return `<button class="sort-btn${active ? " active" : ""}" onclick="this.getRootNode().host._setInstalledSort('${f.id}')">${f.label}${active ? ` ${arrow}` : ""}</button>`;
+        }).join("")}
+      </div>`;
+  }
+
   _renderInstalled() {
     if (this._installedLoading) {
       return `<div class="loading">${this._tr("loading", "Fetching updates…")}</div>`;
@@ -505,17 +535,56 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         <p>${this._tr("installed_empty", "No installed updates found.")}</p>
       </div>`;
     }
-    const rows = this._installed.map((u) => `
+
+    const typeOrder = { core: 0, haos: 1, addon: 2, hacs: 3, device: 4, other: 5 };
+    const sorted = [...this._installed].sort((a, b) => {
+      const dir = this._installedSortDir === "asc" ? 1 : -1;
+      switch (this._installedSortBy) {
+        case "type": {
+          const tc = (typeOrder[a.type] ?? 99) - (typeOrder[b.type] ?? 99);
+          return tc !== 0 ? tc * dir : a.title.toLowerCase().localeCompare(b.title.toLowerCase());
+        }
+        case "release_date": {
+          const aD = a.release_date || "";
+          const bD = b.release_date || "";
+          if (!aD && !bD) return 0;
+          if (!aD) return 1;
+          if (!bD) return -1;
+          return aD.localeCompare(bD) * dir;
+        }
+        case "install_date": {
+          const aI = a.install_date || "";
+          const bI = b.install_date || "";
+          if (!aI && !bI) return 0;
+          if (!aI) return 1;
+          if (!bI) return -1;
+          return aI.localeCompare(bI) * dir;
+        }
+        default:
+          return a.title.toLowerCase().localeCompare(b.title.toLowerCase()) * dir;
+      }
+    });
+
+    const rows = sorted.map((u) => `
       <tr>
-        <td class="name-cell"><span class="title">${this._escHtml(u.title)}</span></td>
+        <td class="name-cell">
+          <span class="type-chip" style="background:${this._typeColor(u.type)}">${this._typeLabel(u.type)}</span>
+          <span class="title">${this._escHtml(u.title)}</span>
+        </td>
         <td class="version-cell"><span class="version-to">${this._escHtml(u.installed_version)}</span></td>
+        <td class="date-cell">${u.release_date || "—"}</td>
+        <td class="date-cell">${u.install_date || "—"}</td>
       </tr>`).join("");
+
     return `
+      <div style="margin-bottom:12px">${this._renderInstalledSortButtons()}</div>
       <div class="group">
         <table class="update-table">
           <thead><tr>
             <th>${this._tr("col_name", "Name")}</th>
             <th>${this._tr("col_installed_version", "Installed version")}</th>
+            <th>${this._tr("col_release_date", "Release date")}</th>
+            <th>${this._tr("col_install_date", "Install date")}</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>

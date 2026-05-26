@@ -44,6 +44,7 @@
   "installed_empty": "Inga installerade uppdateringar hittades.",
   "col_installed_version": "Installerad version",
   "col_install_date": "Installationsdatum",
+  "col_type": "Typ",
   "history_empty": "Ingen installationshistorik hittades.",
   "history_no_recorder": "Recorder är inte tillgänglig. Aktivera recorder-integrationen för att spåra installationshistorik.",
   "history_info_prefix": "Visar installationer sedan",

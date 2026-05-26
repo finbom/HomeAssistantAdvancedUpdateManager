@@ -8,9 +8,58 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
-from .const import BACKUP_TYPE_FULL, BACKUP_TYPE_ADDON_ONLY, CONF_DEFAULT_BACKUP_TYPE, DOMAIN
+from .const import (
+    BACKUP_TYPE_FULL, BACKUP_TYPE_ADDON_ONLY, CONF_DEFAULT_BACKUP_TYPE, DOMAIN,
+    CORE_ENTITY_ID, HAOS_ENTITY_ID,
+    UPDATE_TYPE_ADDON, UPDATE_TYPE_CORE, UPDATE_TYPE_DEVICE,
+    UPDATE_TYPE_HACS, UPDATE_TYPE_HAOS, UPDATE_TYPE_OTHER,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _classify_entity(entity_id: str, entry: er.RegistryEntry | None) -> str:
+    if entity_id == CORE_ENTITY_ID:
+        return UPDATE_TYPE_CORE
+    if entity_id == HAOS_ENTITY_ID:
+        return UPDATE_TYPE_HAOS
+    if entry:
+        if entry.platform == "hacs":
+            return UPDATE_TYPE_HACS
+        if entry.platform == "hassio":
+            return UPDATE_TYPE_ADDON
+        if entry.device_id:
+            return UPDATE_TYPE_DEVICE
+    return UPDATE_TYPE_OTHER
+
+
+async def _get_last_install_dates(hass: HomeAssistant, entity_ids: list[str]) -> dict[str, str]:
+    """Return the most recent install date (on→off transition) per entity from recorder."""
+    if not entity_ids:
+        return {}
+    result: dict[str, str] = {}
+    try:
+        from homeassistant.components.recorder import get_instance  # noqa: PLC0415
+        from homeassistant.components.recorder.history import get_significant_states  # noqa: PLC0415
+        from homeassistant.util import dt as dt_util  # noqa: PLC0415
+
+        instance = get_instance(hass)
+        start_time = dt_util.utcnow() - datetime.timedelta(days=365)
+        states_dict = await instance.async_add_executor_job(
+            get_significant_states, hass, start_time, None, entity_ids
+        )
+        for entity_id, state_list in states_dict.items():
+            for i in range(len(state_list) - 1, 0, -1):
+                prev = state_list[i - 1]
+                curr = state_list[i]
+                if getattr(prev, "state", None) == "on" and getattr(curr, "state", None) == "off":
+                    changed = getattr(curr, "last_changed", None)
+                    if changed:
+                        result[entity_id] = changed.strftime("%Y-%m-%d")
+                    break
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("AUM install dates: %s", err)
+    return result
 
 
 def async_setup(hass: HomeAssistant) -> None:
@@ -193,7 +242,9 @@ async def ws_get_restart_info(hass: HomeAssistant, connection, msg: dict) -> Non
 async def ws_get_installed(hass: HomeAssistant, connection, msg: dict) -> None:
     """Return all update entities that are currently up to date (state=off)."""
     registry = er.async_get(hass)
+    storage = (hass.data.get(DOMAIN) or {}).get("storage")
     installed = []
+
     for state in hass.states.async_all("update"):
         if state.state != "off":
             continue
@@ -205,11 +256,23 @@ async def ws_get_installed(hass: HomeAssistant, connection, msg: dict) -> None:
             or (entry and (entry.name or entry.original_name))
             or entity_id.removeprefix("update.")
         )
+        installed_version = attrs.get("installed_version") or ""
+        update_type = _classify_entity(entity_id, entry)
+        release_date = (storage.get(entity_id, installed_version) if storage and installed_version else "") or ""
         installed.append({
             "entity_id": entity_id,
             "title": title,
-            "installed_version": attrs.get("installed_version") or "",
+            "installed_version": installed_version,
+            "type": update_type,
+            "release_date": release_date,
+            "install_date": "",
         })
+
+    entity_ids = [item["entity_id"] for item in installed]
+    install_dates = await _get_last_install_dates(hass, entity_ids)
+    for item in installed:
+        item["install_date"] = install_dates.get(item["entity_id"], "")
+
     installed.sort(key=lambda x: x["title"].lower())
     connection.send_result(msg["id"], {"installed": installed})
 
