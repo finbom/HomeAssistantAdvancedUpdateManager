@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.3.19] - 2026-05-27
+### Changed
+- Version bump to validate persistent install history tracking
+
 ## [0.3.18] - 2026-05-26
 ### Added
 - Persistent install history stored in HA Storage (`/config/.storage/advanced_update_manager`) — no longer depends on recorder purge settings
