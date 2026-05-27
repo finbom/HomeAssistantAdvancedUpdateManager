@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.3.20] - 2026-05-27
+### Added
+- Case-insensitive search/filter box on the Currently installed tab — filters by name in real time and shows match count
+
 ## [0.3.19] - 2026-05-27
 ### Changed
 - Version bump to validate persistent install history tracking
