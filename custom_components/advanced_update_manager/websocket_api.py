@@ -245,6 +245,7 @@ async def ws_get_installed(hass: HomeAssistant, connection, msg: dict) -> None:
             "installed_version": installed_version,
             "type": update_type,
             "release_date": release_date,
+            "release_url": attrs.get("release_url") or "",
             "install_date": "",
         })
 
@@ -254,6 +255,12 @@ async def ws_get_installed(hass: HomeAssistant, connection, msg: dict) -> None:
 
     installed.sort(key=lambda x: x["title"].lower())
     connection.send_result(msg["id"], {"installed": installed})
+
+
+_RELEASE_URL_TEMPLATES = {
+    CORE_ENTITY_ID: "https://github.com/home-assistant/core/releases/tag/{version}",
+    HAOS_ENTITY_ID: "https://github.com/home-assistant/operating-system/releases/tag/{version}",
+}
 
 
 @websocket_api.websocket_command({
@@ -269,14 +276,23 @@ async def ws_get_history(hass: HomeAssistant, connection, msg: dict) -> None:
     if storage:
         history = storage.get_install_history()  # newest first
         for e in history:
+            entity_id = e["entity_id"]
+            to_version = e.get("to_version", "")
+            release_url = ""
+            if entity_id in _RELEASE_URL_TEMPLATES and to_version:
+                release_url = _RELEASE_URL_TEMPLATES[entity_id].format(version=to_version)
+            else:
+                state = hass.states.get(entity_id)
+                release_url = (state.attributes.get("release_url") or "") if state else ""
             events.append({
-                "entity_id": e["entity_id"],
+                "entity_id": entity_id,
                 "title": e["title"],
                 "type": e.get("type", "other"),
                 "from_version": e.get("from_version", ""),
-                "to_version": e.get("to_version", ""),
+                "to_version": to_version,
                 "date": e["install_date"],
                 "datetime": e["install_date"] + "T12:00:00+00:00",
+                "release_url": release_url,
             })
         if events:
             oldest_date = events[-1]["date"]  # last item is oldest (list is newest-first)

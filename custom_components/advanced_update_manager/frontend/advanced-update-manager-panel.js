@@ -582,16 +582,21 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       }
     });
 
-    const rows = sorted.map((u) => `
+    const rows = sorted.map((u) => {
+      const releaseLink = u.release_url
+        ? `<a href="${u.release_url}" target="_blank" rel="noopener" class="release-link" title="${this._tr("release_notes_title", "View release notes")}">↗</a>`
+        : "";
+      return `
       <tr>
         <td class="name-cell">
           <span class="type-chip" style="background:${this._typeColor(u.type)}">${this._typeLabel(u.type)}</span>
           <span class="title">${this._escHtml(u.title)}</span>
         </td>
         <td class="version-cell"><span class="version-to">${this._escHtml(u.installed_version)}</span></td>
-        <td class="date-cell">${u.release_date || "—"}</td>
+        <td class="date-cell">${u.release_date || "—"} ${releaseLink}</td>
         <td class="date-cell">${u.install_date || "—"}</td>
-      </tr>`).join("");
+      </tr>`;
+    }).join("");
 
     const countLabel = needle
       ? `${sorted.length} / ${this._installed.length}`
@@ -651,7 +656,11 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       </div>`;
     }
 
-    const rows = this._historyEvents.map((e) => `
+    const rows = this._historyEvents.map((e) => {
+      const releaseLink = e.release_url
+        ? `<a href="${e.release_url}" target="_blank" rel="noopener" class="release-link" title="${this._tr("release_notes_title", "View release notes")}">↗</a>`
+        : "";
+      return `
       <tr>
         <td class="name-cell">
           <span class="type-chip" style="background:${this._typeColor(e.type || "other")}">${this._typeLabel(e.type || "other")}</span>
@@ -661,9 +670,11 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           <span class="version-from">${this._escHtml(e.from_version)}</span>
           <span class="arrow">→</span>
           <span class="version-to">${this._escHtml(e.to_version)}</span>
+          ${releaseLink}
         </td>
         <td class="date-cell">${e.date}</td>
-      </tr>`).join("");
+      </tr>`;
+    }).join("");
 
     return `
       ${infoHtml}
