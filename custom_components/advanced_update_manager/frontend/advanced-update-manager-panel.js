@@ -27,6 +27,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     this._installedLoading = false;
     this._installedSortBy = "type";   // "name" | "type" | "release_date" | "install_date"
     this._installedSortDir = "asc";
+    this._installedFilter = "";
     this._historyEvents = [];
     this._historyOldestDate = null;
     this._historyRecorderAvailable = true;
@@ -227,6 +228,17 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       this._sortDir = field === "date" ? "desc" : "asc";
     }
     this._render();
+  }
+
+  _setInstalledFilter(value) {
+    this._installedFilter = value;
+    this._render();
+    const input = this.shadowRoot.querySelector(".search-input");
+    if (input) {
+      input.focus();
+      const len = input.value.length;
+      input.setSelectionRange(len, len);
+    }
   }
 
   _setInstalledSort(field) {
@@ -536,8 +548,13 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       </div>`;
     }
 
+    const needle = this._installedFilter.toLowerCase();
+    const filtered = needle
+      ? this._installed.filter(u => u.title.toLowerCase().includes(needle))
+      : this._installed;
+
     const typeOrder = { core: 0, haos: 1, addon: 2, hacs: 3, device: 4, other: 5 };
-    const sorted = [...this._installed].sort((a, b) => {
+    const sorted = [...filtered].sort((a, b) => {
       const dir = this._installedSortDir === "asc" ? 1 : -1;
       switch (this._installedSortBy) {
         case "type": {
@@ -576,8 +593,24 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         <td class="date-cell">${u.install_date || "—"}</td>
       </tr>`).join("");
 
+    const countLabel = needle
+      ? `${sorted.length} / ${this._installed.length}`
+      : `${this._installed.length}`;
+
     return `
-      <div style="margin-bottom:12px">${this._renderInstalledSortButtons()}</div>
+      <div style="margin-bottom:12px">
+        <div class="search-bar">
+          <input
+            type="text"
+            class="search-input"
+            placeholder="${this._tr("search_placeholder", "Filter by name…")}"
+            value="${this._escHtml(this._installedFilter)}"
+            oninput="this.getRootNode().host._setInstalledFilter(this.value)"
+          />
+          <span class="search-count">${countLabel}</span>
+        </div>
+        ${this._renderInstalledSortButtons()}
+      </div>
       <div class="group">
         <table class="update-table">
           <thead><tr>
@@ -779,6 +812,10 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         .tab-btn { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: 8px 18px; cursor: pointer; font-size: 0.875rem; color: var(--secondary-text-color); white-space: nowrap; transition: color 0.15s; }
         .tab-btn:hover { color: var(--primary-text-color); }
         .tab-btn.active { color: var(--primary-color, #03a9f4); border-bottom-color: var(--primary-color, #03a9f4); font-weight: 600; }
+        .search-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+        .search-input { flex: 1; max-width: 320px; padding: 6px 10px; border: 1px solid var(--divider-color, #e0e0e0); border-radius: 4px; background: var(--card-background-color, white); color: var(--primary-text-color); font-size: 0.875rem; outline: none; }
+        .search-input:focus { border-color: var(--primary-color, #03a9f4); }
+        .search-count { font-size: 0.8rem; color: var(--secondary-text-color); white-space: nowrap; }
         .sort-group { display: flex; align-items: center; gap: 4px; }
         .sort-label { font-size: 0.8rem; color: var(--secondary-text-color); white-space: nowrap; }
         .sort-btn { background: none; border: 1px solid var(--divider-color, #e0e0e0); color: var(--secondary-text-color); border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 0.8rem; white-space: nowrap; transition: all 0.15s; }
