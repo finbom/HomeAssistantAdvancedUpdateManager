@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.0] - 2026-05-29
+### Changed
+- Version bumped to 1.0.0 — the integration has been running in production and is considered stable enough for an official 1.0 release
+
+## [0.3.21] - 2026-05-27
+### Added
+- Release notes link on the Currently Installed and Latest Installed tabs — each row links directly to the GitHub release page for that version
+
 ## [0.3.20] - 2026-05-27
 ### Added
 - Case-insensitive search/filter box on the Currently installed tab — filters by name in real time and shows match count
