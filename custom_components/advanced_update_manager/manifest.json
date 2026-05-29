@@ -3,7 +3,7 @@
   "name": "Advanced Update Manager",
   "codeowners": ["@finbom"],
   "config_flow": true,
-  "dependencies": ["http", "panel_custom"],
+  "dependencies": ["http", "panel_custom", "recorder"],
   "documentation": "https://github.com/finbom/HomeAssistantAdvancedUpdateManager",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/finbom/HomeAssistantAdvancedUpdateManager/issues",
