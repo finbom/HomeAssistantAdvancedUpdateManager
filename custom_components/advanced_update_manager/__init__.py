@@ -111,10 +111,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         _LOGGER.debug("AUM tracked install: %s %s → %s", entity_id, from_version, to_version)
 
+        coordinator = hass.data.get(DOMAIN, {}).get("coordinator")
+        if coordinator:
+            hass.async_create_task(coordinator.async_request_refresh())
+
     entry.async_on_unload(hass.bus.async_listen("state_changed", _on_state_changed))
 
     websocket_api.async_setup(hass)
     await coordinator.async_refresh()
+
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
 
     # Seed history from recorder (one-time, runs in background)
     if not storage.is_history_seeded():
@@ -180,8 +186,10 @@ async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     async_remove_panel(hass, PANEL_URL_PATH)
-    static_flag = hass.data[DOMAIN].get("static_paths_registered")
-    hass.data[DOMAIN].clear()
-    if static_flag:
-        hass.data[DOMAIN]["static_paths_registered"] = True
-    return True
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor"])
+    if unload_ok:
+        static_flag = hass.data[DOMAIN].get("static_paths_registered")
+        hass.data[DOMAIN].clear()
+        if static_flag:
+            hass.data[DOMAIN]["static_paths_registered"] = True
+    return unload_ok

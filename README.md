@@ -12,6 +12,7 @@ A HACS custom integration that adds a dedicated **Update Manager** panel to your
 - **Backup before update** — one-click backup + install
 - **Skip** a specific version without losing the update notification
 - **Real-time sync** — automatically reflects updates installed via the normal HA UI
+- **Sensor entities** — expose update statistics to dashboards, automations, and scripts
 
 ## Installation via HACS
 
@@ -35,6 +36,24 @@ A HACS custom integration that adds a dedicated **Update Manager** panel to your
 - It runs inside HA's own process and subscribes to `update.*` entity state changes
 - Release dates are fetched from the GitHub Releases API and stored persistently in `.storage/advanced_update_manager.json`
 - Updates installed via the normal HA UI are automatically removed from the panel's list
+
+## Sensors
+
+Advanced Update Manager creates a set of HA sensor entities grouped under a single **Advanced Update Manager** device in **Settings → Devices & Services**. Use them in dashboards, automations, and scripts.
+
+| Sensor | Example value | Description |
+|--------|--------------|-------------|
+| **Pending Updates** | `7` | Total pending updates. Attributes include per-type counts: `core`, `haos`, `addon`, `hacs`, `device`, `other`. Ideal for sidebar badges or notification automations. |
+| **Oldest Pending Update** | `47 days` | Age in days of the oldest available update (based on release date). Attributes identify the specific update. |
+| **Days Since Last Install** | `12 days` | The "accident counter" — days since anything was installed. Resets to `0` on every install. Attributes show what was last installed. |
+| **Last Installed** | `ESPHome 2025.5.1` | Name and version of the most recently installed update. Attributes include entity ID, type, from/to version, and install date. |
+| **Updates Released This Week** | `4` | Number of pending updates released in the last 7 days. Spikes after major HA releases. |
+| **Major Version Updates Pending** | `1` | Count of updates where the major version number changed — a proxy for breaking changes. Attributes list the specific updates. |
+| **History Log Size** | `48 KB` | Size of the persistent storage file on disk. Use in automations to alert when the log grows unexpectedly large. |
+| **Total Installs** | `312` | Lifetime count of all tracked installs in the retained history. |
+| **Avg Days Release to Install** | `4.2 days` | Average time between a release being published and you installing it — your personal update hygiene score. |
+| **Longest Gap Without Update** | `34 days` | All-time record of the longest gap between consecutive installs — your personal best on the "accident counter". |
+| **Most Updated Integration** | `ESPHome` | The integration you have updated most often. Attributes include the install count and entity ID. |
 
 ## Update types
 
