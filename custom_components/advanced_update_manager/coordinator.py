@@ -97,6 +97,22 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
 
             update_type = self._classify(state, entry)
 
+            # Determine whether this update can actually be installed.
+            # UpdateEntityFeature.INSTALL = 1; absence means the Supervisor has blocked it
+            # (e.g. the add-on requires a newer HA Core version than what is running).
+            supported_features = attrs.get("supported_features")
+            installable = supported_features is None or bool(supported_features & 1)
+
+            # For blocked add-ons, fetch the Supervisor info once here so we can surface the
+            # minimum HA version requirement — and reuse it below in the release-date section
+            # to avoid a second network call.
+            cached_addon_info: dict | None = None
+            min_ha_version = ""
+            if not installable and update_type == UPDATE_TYPE_ADDON and entry and entry.unique_id:
+                supervisor_slug_early = entry.unique_id.removesuffix("_version_latest")
+                cached_addon_info = await fetch_supervisor_addon_info(session, supervisor_slug_early)
+                min_ha_version = (cached_addon_info or {}).get("homeassistant") or ""
+
             # HACS entities sometimes have no release_url (HACS returns None when
             # releases aren't cached yet). Fall back to unique_id which HACS sets to
             # the repository full_name, e.g. "piitaya/lovelace-mushroom".
@@ -131,7 +147,8 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                     if update_type == UPDATE_TYPE_ADDON and entry and entry.unique_id:
                         # Strip _version_latest suffix — HA appends this to the slug in unique_id
                         supervisor_slug = entry.unique_id.removesuffix("_version_latest")
-                        addon_info = await fetch_supervisor_addon_info(session, supervisor_slug)
+                        # Reuse info already fetched for the not-installable check if available
+                        addon_info = cached_addon_info if cached_addon_info is not None else await fetch_supervisor_addon_info(session, supervisor_slug)
                         supervisor_url = (addon_info or {}).get("url", "")
                         # Only replace github_url with supervisor URL when release_url has no
                         # GitHub URL — the release_url may contain a subpath (/blob/…/samba/…)
@@ -196,6 +213,8 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                 "skipped_version": attrs.get("skipped_version"),
                 "in_progress": attrs.get("in_progress", False),
                 "auto_update": attrs.get("auto_update", False),
+                "installable": installable,
+                "min_ha_version": min_ha_version,
             })
 
         return sorted(updates, key=lambda u: (TYPE_ORDER.get(u["type"], 99), u["title"].lower()))

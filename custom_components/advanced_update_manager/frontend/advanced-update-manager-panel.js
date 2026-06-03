@@ -400,6 +400,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   _renderUpdateRow(u, showTypeBadge = false) {
     const isInstalling = this._installing.has(u.entity_id) || u.in_progress;
     const isBackupInstall = this._installingWithBackup.has(u.entity_id);
+    const isNotInstallable = u.installable === false;
     const dateDisplay = u.release_date || "—";
     const releaseLink = u.release_url
       ? `<a href="${u.release_url}" target="_blank" rel="noopener" class="release-link" title="${this._tr("release_notes_title", "View release notes")}">↗</a>`
@@ -408,14 +409,44 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       ? `<span class="type-chip" style="background:${this._typeColor(u.type)}">${this._typeLabel(u.type)}</span>`
       : "";
 
+    const notInstallableChip = isNotInstallable
+      ? (() => {
+          const reason = u.min_ha_version
+            ? `${this._tr("not_installable_requires_ha", "Requires HA")} ${this._escHtml(u.min_ha_version)}`
+            : this._tr("not_installable_tooltip", "This update cannot be installed right now");
+          return `<span class="not-installable-chip" title="${reason}">⚠ ${this._tr("not_installable_label", "Not installable")}</span>`;
+        })()
+      : "";
+
     const installingText = isBackupInstall
       ? this._tr("installing_backup", "Creating backup & installing update…")
       : this._tr("installing", "Installing…");
 
+    const actionCell = isInstalling
+      ? `<div class="installing-state">
+           <span class="badge in-progress-badge">${installingText}</span>
+           <div class="progress-bar"></div>
+         </div>`
+      : isNotInstallable
+        ? (() => {
+            const reasonText = u.min_ha_version
+              ? `<span class="not-installable-reason">${this._tr("not_installable_requires_ha", "Requires HA")} ${this._escHtml(u.min_ha_version)}</span>`
+              : "";
+            return `<div class="not-installable-action">
+              ${reasonText}
+              <button class="btn btn-skip" onclick="this.getRootNode().host._requestSkip('${this._escHtml(u.entity_id)}')" title="${this._tr("btn_skip_title", "Skip this version")}">${this._tr("btn_skip", "Skip")}</button>
+            </div>`;
+          })()
+        : `
+          <button class="btn btn-update" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', false)" title="${this._tr("btn_update_title", "Install update")}">${this._tr("btn_update", "Update")}</button>
+          <button class="btn btn-backup" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', true)" title="${this._tr("btn_backup_title", "Back up and install")}">${this._tr("btn_backup_update", "Backup + Update")}</button>
+          <button class="btn btn-skip" onclick="this.getRootNode().host._requestSkip('${this._escHtml(u.entity_id)}')" title="${this._tr("btn_skip_title", "Skip this version")}">${this._tr("btn_skip", "Skip")}</button>
+        `;
+
     return `
-      <tr class="update-row${isInstalling ? " installing" : ""}">
+      <tr class="update-row${isInstalling ? " installing" : ""}${isNotInstallable ? " not-installable-row" : ""}">
         <td class="name-cell">
-          ${typeBadge}<span class="title">${this._escHtml(u.title)}</span>
+          ${typeBadge}<span class="title">${this._escHtml(u.title)}</span>${notInstallableChip}
         </td>
         <td class="version-cell">
           <span class="version-from">${this._escHtml(u.installed_version)}</span>
@@ -423,18 +454,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           <span class="version-to">${this._escHtml(u.latest_version)}</span>
         </td>
         <td class="date-cell">${dateDisplay} ${releaseLink}</td>
-        <td class="action-cell">
-          ${isInstalling
-            ? `<div class="installing-state">
-                 <span class="badge in-progress-badge">${installingText}</span>
-                 <div class="progress-bar"></div>
-               </div>`
-            : `
-              <button class="btn btn-update" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', false)" title="${this._tr("btn_update_title", "Install update")}">${this._tr("btn_update", "Update")}</button>
-              <button class="btn btn-backup" onclick="this.getRootNode().host._requestInstall('${this._escHtml(u.entity_id)}', true)" title="${this._tr("btn_backup_title", "Back up and install")}">${this._tr("btn_backup_update", "Backup + Update")}</button>
-              <button class="btn btn-skip" onclick="this.getRootNode().host._requestSkip('${this._escHtml(u.entity_id)}')" title="${this._tr("btn_skip_title", "Skip this version")}">${this._tr("btn_skip", "Skip")}</button>
-            `}
-        </td>
+        <td class="action-cell">${actionCell}</td>
       </tr>`;
   }
 
@@ -865,6 +885,10 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         .progress-bar::after { content: ''; position: absolute; top: 0; left: 0; height: 100%; width: 40%; background: var(--primary-color, #03a9f4); border-radius: 2px; animation: aum-progress 1.5s ease-in-out infinite; }
         @keyframes aum-progress { 0% { transform: translateX(-200%); } 100% { transform: translateX(350%); } }
         .type-chip { display: inline-block; color: white; padding: 1px 7px; border-radius: 10px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; margin-right: 8px; vertical-align: middle; }
+        .not-installable-chip { display: inline-block; color: white; background: #e53935; padding: 1px 7px; border-radius: 10px; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.4px; margin-left: 8px; vertical-align: middle; cursor: default; }
+        .not-installable-row td { opacity: 0.8; }
+        .not-installable-action { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .not-installable-reason { font-size: 0.8rem; color: #e53935; font-weight: 500; white-space: nowrap; }
         .title { font-weight: 500; color: var(--primary-text-color); vertical-align: middle; }
         .version-from { color: var(--secondary-text-color); font-size: 0.875rem; }
         .arrow { margin: 0 6px; color: var(--secondary-text-color); }

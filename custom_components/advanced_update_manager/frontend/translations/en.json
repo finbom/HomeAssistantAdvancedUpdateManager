@@ -59,5 +59,8 @@
   "restart_btn": "Restart Home Assistant",
   "confirm_restart_title": "Confirm restart",
   "confirm_restart_body": "Are you sure you want to restart Home Assistant? This will cause a brief outage.",
-  "btn_restart": "Restart"
+  "btn_restart": "Restart",
+  "not_installable_label": "Not installable",
+  "not_installable_tooltip": "This update cannot be installed right now",
+  "not_installable_requires_ha": "Requires HA"
 }

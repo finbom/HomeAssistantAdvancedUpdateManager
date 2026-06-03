@@ -59,5 +59,8 @@
   "restart_btn": "Starta om Home Assistant",
   "confirm_restart_title": "Bekräfta omstart",
   "confirm_restart_body": "Är du säker på att du vill starta om Home Assistant? Det kommer orsaka ett kort avbrott.",
-  "btn_restart": "Starta om"
+  "btn_restart": "Starta om",
+  "not_installable_label": "Kan ej installeras",
+  "not_installable_tooltip": "Denna uppdatering kan inte installeras just nu",
+  "not_installable_requires_ha": "Kräver HA"
 }
