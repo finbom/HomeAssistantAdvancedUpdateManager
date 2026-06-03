@@ -96,6 +96,14 @@ Sort by release date.
 Sort by update type. (Core, HACS, Apps etc...)
 ![Sort by type](assets/AU-sortbytype.jpg)
 
+Another screenshot.
+![Sort by type](assets/AU1.jpg)
+
+View for what is currently installed.
+![Sort by type](assets/AU2.jpg)
+
+View for what has been installed.
+![Sort by type](assets/AU3.jpg)
 
 
 ## License
