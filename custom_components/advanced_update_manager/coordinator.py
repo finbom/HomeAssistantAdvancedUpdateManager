@@ -168,6 +168,11 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
 
             # Layer 1 — persistent cache
             release_date = self.storage.get(entity_id, new_version)
+            cached_url = self.storage.get_url(entity_id, new_version)
+            if cached_url:
+                # A confirmed release URL was stored previously — use it directly.
+                release_url = cached_url
+                release_url_constructed = False
 
             # Layer 2 — HACS in-memory store (zero network calls)
             if not release_date and new_version and update_type == UPDATE_TYPE_HACS:
@@ -181,7 +186,10 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                         release_url_constructed = False
 
             # Layer 3+ — remote lookups (PyPI → GitHub REST API → Atom feed → git tag)
-            if not release_date and new_version:
+            # Also runs when the date is cached but the release URL hasn't been confirmed
+            # yet (one-time catch-up so the correct tag format, e.g. v24.0.0, is stored).
+            url_catchup = release_url_constructed and cached_url is None
+            if new_version and (not release_date or url_catchup):
                 if entity_id == CORE_ENTITY_ID:
                     release_date = await fetch_pypi_release_date(
                         session, "homeassistant", new_version
@@ -209,10 +217,12 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                             subpath_src = addon_github_url if (update_type == UPDATE_TYPE_ADDON and addon_github_url) else github_url
                             tag_prefix = extract_monorepo_subpath(subpath_src) if update_type == UPDATE_TYPE_ADDON else None
                             _LOGGER.debug("AUM add-on repo: %s/%s subpath=%r", owner, repo, tag_prefix)
-                            release_date, confirmed_tag = await fetch_release_date(
+                            fetched_date, confirmed_tag = await fetch_release_date(
                                 session, owner, repo, new_version, self.github_token, tag_prefix
                             )
-                            _LOGGER.debug("AUM fetch_release_date result: %r (tag=%r)", release_date, confirmed_tag)
+                            _LOGGER.debug("AUM fetch_release_date result: %r (tag=%r)", fetched_date, confirmed_tag)
+                            if fetched_date:
+                                release_date = fetched_date
                             if confirmed_tag and release_url_constructed:
                                 release_url = f"https://github.com/{owner}/{repo}/releases/tag/{confirmed_tag}"
                                 release_url_constructed = False
@@ -239,7 +249,12 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                         )
 
             if release_date:
-                await self.storage.async_set(entity_id, new_version, release_date)
+                # Cache the confirmed release URL alongside the date so future
+                # coordinator cycles can skip the GitHub lookup entirely.
+                # "" is stored as a sentinel when no tag was confirmed, preventing
+                # repeated retries for add-ons without GitHub releases.
+                confirmed_url = release_url if (release_url and not release_url_constructed) else ""
+                await self.storage.async_set(entity_id, new_version, release_date, confirmed_url)
 
             updates.append({
                 "entity_id": entity_id,

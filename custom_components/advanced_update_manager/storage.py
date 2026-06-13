@@ -15,18 +15,21 @@ class UpdateDateStorage:
         self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._hass = hass
         self._dates: dict[str, str] = {}
+        self._urls: dict[str, str] = {}
         self._install_history: list[dict] = []
         self._history_seeded: bool = False
 
     async def async_load(self) -> None:
         data = await self._store.async_load() or {}
         self._dates = data.get("dates", {})
+        self._urls = data.get("urls", {})
         self._install_history = data.get("install_history", [])
         self._history_seeded = data.get("history_seeded", False)
 
     async def _async_save(self) -> None:
         await self._store.async_save({
             "dates": self._dates,
+            "urls": self._urls,
             "install_history": self._install_history,
             "history_seeded": self._history_seeded,
         })
@@ -36,8 +39,22 @@ class UpdateDateStorage:
     def get(self, entity_id: str, version: str) -> str | None:
         return self._dates.get(f"{entity_id}|{version}")
 
-    async def async_set(self, entity_id: str, version: str, date: str) -> None:
-        self._dates[f"{entity_id}|{version}"] = date
+    def get_url(self, entity_id: str, version: str) -> str | None:
+        """Return cached release URL, or None if never looked up.
+
+        Empty string means we looked up and found no confirmed tag (sentinel to
+        avoid retrying on every coordinator cycle).
+        """
+        key = f"{entity_id}|{version}"
+        if key not in self._urls:
+            return None
+        return self._urls[key]
+
+    async def async_set(self, entity_id: str, version: str, date: str, url: str | None = None) -> None:
+        key = f"{entity_id}|{version}"
+        self._dates[key] = date
+        if url is not None:
+            self._urls[key] = url
         await self._async_save()
 
     # --- Install history ---
