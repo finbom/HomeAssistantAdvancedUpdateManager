@@ -49,6 +49,16 @@ def _addon_slug(unique_id: str) -> str:
     return slug.removeprefix("core_")
 
 
+def _is_major_version_change(installed: str, latest: str) -> bool:
+    """Return True when the major semver component increased (proxy for breaking change)."""
+    try:
+        i = int(str(installed).lstrip("v").split(".")[0])
+        n = int(str(latest).lstrip("v").split(".")[0])
+        return n > i
+    except (ValueError, IndexError, AttributeError):
+        return False
+
+
 TYPE_ORDER = {
     UPDATE_TYPE_CORE: 0,
     UPDATE_TYPE_HAOS: 1,
@@ -122,6 +132,36 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                     base = f"https://github.com/{uid}"
                     release_url = f"{base}/releases/tag/{new_version}" if new_version else base
 
+            # ADDON: always resolve GitHub URL from Supervisor so we can populate release_url
+            # even when release_date is already cached (avoiding a link-less update card).
+            # Reuse cached_addon_info if it was already fetched for the installable check.
+            addon_github_url = ""
+            if update_type == UPDATE_TYPE_ADDON and entry and entry.unique_id:
+                supervisor_slug = entry.unique_id.removesuffix("_version_latest")
+                addon_info = cached_addon_info if cached_addon_info is not None else await fetch_supervisor_addon_info(session, supervisor_slug)
+                sv_url = (addon_info or {}).get("url", "")
+                if sv_url and "github.com" in sv_url:
+                    addon_github_url = sv_url
+                if not addon_github_url and supervisor_slug.startswith("core_"):
+                    addon_github_url = "https://github.com/home-assistant/addons"
+
+                # Build a release_url from the supervisor GitHub URL when the update
+                # entity itself doesn't expose one. Only fill an empty release_url so
+                # we never discard a URL that the entity or HACS already set.
+                if addon_github_url and not release_url:
+                    info = extract_owner_repo(addon_github_url)
+                    if info:
+                        owner, repo = info
+                        subpath = extract_monorepo_subpath(addon_github_url)
+                        if new_version:
+                            if subpath:
+                                # Monorepo (home-assistant/addons): tags are "{slug}-{version}"
+                                release_url = f"https://github.com/{owner}/{repo}/releases/tag/{subpath}-{new_version}"
+                            else:
+                                release_url = f"https://github.com/{owner}/{repo}/releases/tag/{new_version}"
+                        else:
+                            release_url = addon_github_url
+
             # Layer 1 — persistent cache
             release_date = self.storage.get(entity_id, new_version)
 
@@ -142,36 +182,27 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                         session, "homeassistant", new_version
                     )
                 else:
-                    github_url = release_url
-                    supervisor_url = ""
-                    if update_type == UPDATE_TYPE_ADDON and entry and entry.unique_id:
-                        # Strip _version_latest suffix — HA appends this to the slug in unique_id
-                        supervisor_slug = entry.unique_id.removesuffix("_version_latest")
-                        # Reuse info already fetched for the not-installable check if available
-                        addon_info = cached_addon_info if cached_addon_info is not None else await fetch_supervisor_addon_info(session, supervisor_slug)
-                        supervisor_url = (addon_info or {}).get("url", "")
-                        # Only replace github_url with supervisor URL when release_url has no
-                        # GitHub URL — the release_url may contain a subpath (/blob/…/samba/…)
-                        # that the bare supervisor URL lacks.
-                        if supervisor_url and "github.com" in supervisor_url:
-                            if "github.com" not in github_url:
-                                github_url = supervisor_url
-
-                        # Hardcoded fallback: official HA add-ons always live in home-assistant/addons
-                        if "github.com" not in github_url and supervisor_slug.startswith("core_"):
-                            github_url = "https://github.com/home-assistant/addons"
+                    # For addons reuse the already-resolved addon_github_url to avoid a
+                    # duplicate Supervisor API call. For others start from release_url.
+                    github_url = release_url if "github.com" in (release_url or "") else ""
+                    if update_type == UPDATE_TYPE_ADDON and (not github_url) and addon_github_url:
+                        github_url = addon_github_url
 
                     if update_type == UPDATE_TYPE_ADDON:
                         _LOGGER.debug(
-                            "AUM add-on lookup: entity=%s release_url=%r supervisor_url=%r github_url=%r",
-                            entity_id, release_url, supervisor_url, github_url,
+                            "AUM add-on lookup: entity=%s release_url=%r addon_github_url=%r github_url=%r",
+                            entity_id, release_url, addon_github_url, github_url,
                         )
 
                     if "github.com" in github_url:
                         info = extract_owner_repo(github_url)
                         if info:
                             owner, repo = info
-                            tag_prefix = extract_monorepo_subpath(github_url) if update_type == UPDATE_TYPE_ADDON else None
+                            # Use addon_github_url for subpath extraction: the constructed
+                            # release_url uses a releases/tag/ path that doesn't contain the
+                            # subfolder segment that extract_monorepo_subpath needs.
+                            subpath_src = addon_github_url if (update_type == UPDATE_TYPE_ADDON and addon_github_url) else github_url
+                            tag_prefix = extract_monorepo_subpath(subpath_src) if update_type == UPDATE_TYPE_ADDON else None
                             _LOGGER.debug("AUM add-on repo: %s/%s subpath=%r", owner, repo, tag_prefix)
                             release_date = await fetch_release_date(
                                 session, owner, repo, new_version, self.github_token, tag_prefix
@@ -215,6 +246,7 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                 "auto_update": attrs.get("auto_update", False),
                 "installable": installable,
                 "min_ha_version": min_ha_version,
+                "major_version_change": _is_major_version_change(current_version, new_version),
             })
 
         return sorted(updates, key=lambda u: (TYPE_ORDER.get(u["type"], 99), u["title"].lower()))

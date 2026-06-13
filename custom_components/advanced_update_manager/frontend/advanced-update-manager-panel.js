@@ -405,6 +405,9 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     const releaseLink = u.release_url
       ? `<a href="${u.release_url}" target="_blank" rel="noopener" class="release-link" title="${this._tr("release_notes_title", "View release notes")}">↗</a>`
       : "";
+    const majorBadge = u.major_version_change
+      ? `<span class="major-badge" title="${this._tr("major_version_title", "Major version update — may contain breaking changes")}">⚠ Major</span>`
+      : "";
     const typeBadge = showTypeBadge
       ? `<span class="type-chip" style="background:${this._typeColor(u.type)}">${this._typeLabel(u.type)}</span>`
       : "";
@@ -452,6 +455,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           <span class="version-from">${this._escHtml(u.installed_version)}</span>
           <span class="arrow">→</span>
           <span class="version-to">${this._escHtml(u.latest_version)}</span>
+          ${majorBadge}
         </td>
         <td class="date-cell">${dateDisplay} ${releaseLink}</td>
         <td class="action-cell">${actionCell}</td>
@@ -895,6 +899,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         .version-to { color: var(--primary-color, #03a9f4); font-weight: 500; font-size: 0.875rem; }
         .date-cell { font-size: 0.875rem; color: var(--secondary-text-color); white-space: nowrap; }
         .release-link { margin-left: 4px; text-decoration: none; color: var(--primary-color, #03a9f4); }
+        .major-badge { display: inline-block; margin-left: 8px; padding: 1px 6px; border-radius: 10px; font-size: 0.7rem; font-weight: 600; background: var(--warning-color, #ff9800); color: white; vertical-align: middle; cursor: default; }
         .action-cell { white-space: nowrap; }
         .btn { border: none; border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 0.8rem; margin-right: 4px; }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }

@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0] - 2026-06-13
+### Added
+- Release notes link (↗) for **HA APPS** (Supervisor add-ons) — AUM now queries the Supervisor API to resolve the add-on's GitHub repository and constructs a direct link to the release tag. Previously only Core and HACS updates had clickable release links.
+- **Major version badge** on pending updates — when an update bumps the major semver component (e.g. 1.x → 2.x), an orange `⚠ Major` badge is shown next to the version number as a heads-up that breaking changes may be included.
+- New `major_version_change` boolean field in the `ws_get_updates` response for automation/dashboard use.
+
+### Changed
+- Add-on date lookups reuse the Supervisor URL resolved upfront instead of making a duplicate Supervisor API call, slightly reducing refresh latency.
+
+## [1.1.0] - 2026-06-10
+### Added
+- 11 statistics sensors: Pending Updates, Oldest Pending Update, Days Since Last Install, Last Installed, Updates Released This Week, Major Version Updates Pending, History Log Size, Total Installs, Avg Days Release to Install, Longest Gap Without Update, Most Updated Integration.
+
 ## [1.0.0] - 2026-05-29
 ### Changed
 - Version bumped to 1.0.0 — the integration has been running in production and is considered stable enough for an official 1.0 release
