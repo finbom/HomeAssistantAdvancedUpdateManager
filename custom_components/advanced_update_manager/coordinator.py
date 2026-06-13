@@ -147,10 +147,11 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                 if not addon_github_url and supervisor_slug.startswith("core_"):
                     addon_github_url = "https://github.com/home-assistant/addons"
 
-                # Build a release_url from the supervisor GitHub URL when the update
-                # entity itself doesn't expose one. Only fill an empty release_url so
-                # we never discard a URL that the entity or HACS already set.
-                if addon_github_url and not release_url:
+                # Build release_url from the supervisor GitHub URL.
+                # Always prefer the supervisor-derived repo URL over what the HA entity
+                # reports — some add-ons (e.g. hassio-addons community add-ons) have a
+                # release_url attribute that points to a non-existent repo and would 404.
+                if addon_github_url:
                     info = extract_owner_repo(addon_github_url)
                     if info:
                         owner, repo = info
