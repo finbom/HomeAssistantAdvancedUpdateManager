@@ -126,11 +126,13 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
             # HACS entities sometimes have no release_url (HACS returns None when
             # releases aren't cached yet). Fall back to unique_id which HACS sets to
             # the repository full_name, e.g. "piitaya/lovelace-mushroom".
+            release_url_constructed = False
             if update_type == UPDATE_TYPE_HACS and (not release_url or "github.com" not in release_url):
                 uid = entry.unique_id if entry else None
                 if uid and "/" in uid and not uid.startswith("http"):
                     base = f"https://github.com/{uid}"
                     release_url = f"{base}/releases/tag/{new_version}" if new_version else base
+                    release_url_constructed = bool(new_version)
 
             # ADDON: always resolve GitHub URL from Supervisor so we can populate release_url
             # even when release_date is already cached (avoiding a link-less update card).
@@ -159,6 +161,7 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                                 release_url = f"https://github.com/{owner}/{repo}/releases/tag/{subpath}-{new_version}"
                             else:
                                 release_url = f"https://github.com/{owner}/{repo}/releases/tag/{new_version}"
+                            release_url_constructed = True
                         else:
                             release_url = addon_github_url
 
@@ -174,6 +177,7 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                         release_date = local_date
                     if local_url:
                         release_url = local_url
+                        release_url_constructed = False
 
             # Layer 3+ — remote lookups (PyPI → GitHub REST API → Atom feed → git tag)
             if not release_date and new_version:
@@ -204,10 +208,13 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                             subpath_src = addon_github_url if (update_type == UPDATE_TYPE_ADDON and addon_github_url) else github_url
                             tag_prefix = extract_monorepo_subpath(subpath_src) if update_type == UPDATE_TYPE_ADDON else None
                             _LOGGER.debug("AUM add-on repo: %s/%s subpath=%r", owner, repo, tag_prefix)
-                            release_date = await fetch_release_date(
+                            release_date, confirmed_tag = await fetch_release_date(
                                 session, owner, repo, new_version, self.github_token, tag_prefix
                             )
-                            _LOGGER.debug("AUM fetch_release_date result: %r", release_date)
+                            _LOGGER.debug("AUM fetch_release_date result: %r (tag=%r)", release_date, confirmed_tag)
+                            if confirmed_tag and release_url_constructed:
+                                release_url = f"https://github.com/{owner}/{repo}/releases/tag/{confirmed_tag}"
+                                release_url_constructed = False
 
                             # Layer 4 — config.yaml commit date (works for add-ons without releases/tags)
                             if not release_date and update_type == UPDATE_TYPE_ADDON:
