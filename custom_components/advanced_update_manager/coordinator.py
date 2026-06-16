@@ -248,6 +248,13 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
                             session, slug, new_version
                         )
 
+            # If the release URL is still an unconfirmed constructed guess (tag format
+            # unknown or no formal release exists), fall back to the known-good source
+            # URL from the Supervisor so we never display a 404 link.
+            if release_url_constructed and update_type == UPDATE_TYPE_ADDON and addon_github_url:
+                release_url = addon_github_url
+                release_url_constructed = False
+
             if release_date:
                 # Cache the confirmed release URL alongside the date so future
                 # coordinator cycles can skip the GitHub lookup entirely.

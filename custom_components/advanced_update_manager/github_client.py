@@ -44,11 +44,74 @@ def extract_monorepo_subpath(url: str) -> str | None:
     return None
 
 
+def _tag_matches_version(tag: str, version: str) -> bool:
+    """Return True if the tag represents the given version with any optional prefix.
+
+    Handles: "1.2.3", "v1.2.3", "addon-1.2.3", "core_ssh-10.3.0", etc.
+    Matches only when the version string follows the LAST "-" or "_" separator,
+    preventing false positives like "my-addon-13.0" matching version "3.0".
+    """
+    bare = version.lstrip("v")
+    if tag == bare or tag == f"v{bare}":
+        return True
+    for sep in ("-", "_"):
+        idx = tag.rfind(sep)
+        if idx >= 0:
+            tail = tag[idx + 1:]
+            if tail == bare or tail == f"v{bare}":
+                return True
+    return False
+
+
+async def _search_tags_for_version(
+    session: aiohttp.ClientSession,
+    owner: str,
+    repo: str,
+    version: str,
+    headers: dict,
+    tag_prefix: str | None = None,
+) -> str | None:
+    """Search all repo tags for one matching the version, regardless of prefix.
+
+    Prefers tags starting with tag_prefix (e.g. "ssh-10.3.0" over "mosquitto-10.3.0").
+    Searches up to 3 pages (300 tags) newest-first.
+    """
+    preferred: list[str] = []
+    others: list[str] = []
+    try:
+        for page in range(1, 4):
+            async with session.get(
+                f"{GITHUB_API}/repos/{owner}/{repo}/tags",
+                headers=headers,
+                params={"per_page": 100, "page": page},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    break
+                tags = await resp.json()
+                if not tags:
+                    break
+                for t in tags:
+                    name = t.get("name", "")
+                    if not _tag_matches_version(name, version):
+                        continue
+                    if tag_prefix and (
+                        name.startswith(f"{tag_prefix}-") or name.startswith(f"{tag_prefix}_")
+                    ):
+                        preferred.append(name)
+                    else:
+                        others.append(name)
+    except Exception as exc:
+        _LOGGER.debug("Tag search failed %s/%s: %s", owner, repo, exc)
+    return next(iter(preferred + others), None)
+
+
 async def fetch_release_date_from_atom(
     session: aiohttp.ClientSession,
     owner: str,
     repo: str,
     version: str,
+    tag_prefix: str | None = None,
 ) -> tuple[str | None, str | None]:
     """Fetch release date from the GitHub Atom feed — no auth, no REST rate limit.
 
@@ -57,7 +120,6 @@ async def fetch_release_date_from_atom(
 
     Returns (date, confirmed_tag) or (None, None).
     """
-    bare = {version, f"v{version}"} if not version.startswith("v") else {version, version[1:]}
     url = f"https://github.com/{owner}/{repo}/releases.atom"
     try:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -66,6 +128,7 @@ async def fetch_release_date_from_atom(
             text = await resp.text()
         ns = {"a": "http://www.w3.org/2005/Atom"}
         root = ET.fromstring(text)
+        best: tuple[str, str] | None = None
         for entry in root.findall("a:entry", ns):
             # Prefer the <link> href which always encodes the tag name cleanly
             link_el = entry.find("a:link", ns)
@@ -77,10 +140,20 @@ async def fetch_release_date_from_atom(
                     tag = href.rsplit("/releases/tag/", 1)[-1]
             if not tag and id_el is not None:
                 tag = (id_el.text or "").rsplit("/", 1)[-1]
-            if tag in bare:
-                updated_el = entry.find("a:updated", ns)
-                if updated_el is not None and updated_el.text:
-                    return updated_el.text[:10], tag
+            if not _tag_matches_version(tag, version):
+                continue
+            updated_el = entry.find("a:updated", ns)
+            if updated_el is None or not updated_el.text:
+                continue
+            date_str = updated_el.text[:10]
+            if tag_prefix and (
+                tag.startswith(f"{tag_prefix}-") or tag.startswith(f"{tag_prefix}_")
+            ):
+                return date_str, tag  # Preferred prefix match — return immediately
+            if best is None:
+                best = (date_str, tag)  # Remember first non-preferred match
+        if best:
+            return best
     except Exception as exc:
         _LOGGER.debug("Atom feed failed for %s/%s: %s", owner, repo, exc)
     return None, None
@@ -168,7 +241,7 @@ async def fetch_release_date(
             _LOGGER.debug("GitHub release request failed for %s/%s@%s: %s", owner, repo, tag, exc)
 
     # 2. Atom feed — no auth, covers the latest ~10 releases without REST rate limits
-    atom_date, atom_tag = await fetch_release_date_from_atom(session, owner, repo, version)
+    atom_date, atom_tag = await fetch_release_date_from_atom(session, owner, repo, version, tag_prefix=tag_prefix)
     if atom_date:
         return atom_date, atom_tag
 
@@ -178,6 +251,18 @@ async def fetch_release_date(
         if date:
             _LOGGER.debug("Found tag date for %s/%s@%s: %s", owner, repo, tag, date)
             return date, tag
+
+    # 4. Last resort: search all repo tags for any tag matching the version string.
+    # Catches unexpected prefix formats (e.g. "core_ssh-10.3.0" when prefix="ssh").
+    found_tag = await _search_tags_for_version(session, owner, repo, version, headers, tag_prefix)
+    if found_tag:
+        date = await _fetch_tag_date(session, owner, repo, found_tag, headers)
+        if date:
+            _LOGGER.debug("Found tag via search for %s/%s version %s: %s (%s)", owner, repo, version, found_tag, date)
+            return date, found_tag
+        # Tag found but date unavailable — return tag anyway so the URL can be corrected
+        _LOGGER.debug("Found tag via search for %s/%s version %s: %s (no date)", owner, repo, version, found_tag)
+        return None, found_tag
 
     return None, None
 
@@ -255,9 +340,10 @@ async def fetch_ha_addon_registry_date(
     version: str,
 ) -> str | None:
     """Fetch release date from Home Assistant's official add-on registry monorepo."""
-    return await fetch_release_date(
+    date, _ = await fetch_release_date(
         session, "home-assistant", "addons", version, token=None, tag_prefix=addon_slug
     )
+    return date
 
 
 async def fetch_addon_config_date(
