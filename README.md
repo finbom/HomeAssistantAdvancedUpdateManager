@@ -3,6 +3,7 @@
 # Home Assistant Advanced Update Manager
 
 [![Ko-Fi](https://img.shields.io/badge/Ko--fi-Support%20me-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/finbom)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-Support%20me-FFDD00?logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/nkzdjs5gzk)
 
 A HACS custom integration that adds a dedicated **Update Manager** panel to your Home Assistant sidebar — with enriched information that the built-in update UI doesn't show..
 
