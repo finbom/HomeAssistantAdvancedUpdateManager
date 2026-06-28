@@ -2,6 +2,8 @@
 
 # Home Assistant Advanced Update Manager
 
+[![Ko-Fi](https://img.shields.io/badge/Ko--fi-Support%20me-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/finbom)
+
 A HACS custom integration that adds a dedicated **Update Manager** panel to your Home Assistant sidebar — with enriched information that the built-in update UI doesn't show..
 
 ## Features
