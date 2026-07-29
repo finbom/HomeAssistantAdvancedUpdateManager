@@ -18,7 +18,17 @@ jobs:
           cd custom_components
           zip -r ../advanced_update_manager.zip advanced_update_manager/
 
+      - name: Detect prerelease
+        id: prerelease
+        run: |
+          if [[ "${{ github.ref_name }}" == *-beta* || "${{ github.ref_name }}" == *-rc* ]]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
           files: advanced_update_manager.zip
+          prerelease: ${{ steps.prerelease.outputs.value }}
