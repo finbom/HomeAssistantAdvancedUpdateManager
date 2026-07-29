@@ -44,24 +44,26 @@ A HACS custom integration that adds a dedicated **Update Manager** panel to your
 
 Advanced Update Manager creates a set of HA sensor entities grouped under a single **Advanced Update Manager** device in **Settings → Devices & Services**. Use them in dashboards, automations, and scripts.
 
+> **Entity IDs are prefixed with the device name.** Because these sensors use HA's device-scoped naming, the entity ID is the device name and the sensor name slugified together — so the **Pending Updates** sensor is `sensor.advanced_update_manager_pending_updates`, *not* `sensor.pending_updates`. The full IDs are listed below. If you renamed the device or an entity, your IDs will differ — check **Developer Tools → States** and filter on `advanced_update_manager` to see the exact names in your install.
+
 | Sensor | Example value | Description |
 |--------|--------------|-------------|
-| **Pending Updates** | `7` | Total pending updates. Attributes include per-type counts: `core`, `haos`, `addon`, `hacs`, `device`, `other`. Ideal for sidebar badges or notification automations. |
-| **Oldest Pending Update** | `47 days` | Age in days of the oldest available update (based on release date). Attributes identify the specific update. |
-| **All Pending Updates** | `7` | Full list of all pending updates exposed as the `pending_updates` attribute, sorted oldest-first. Each item includes `entity_id`, `title`, `type`, `installed_version`, `latest_version`, `release_date`, `days_pending`, `major_version_change`, `release_url`, and `skipped`. Use in notification automations to list every pending update, or filter in templates by type, age, or whether the version was skipped. |
-| **Days Since Last Install** | `12 days` | The "accident counter" — days since anything was installed. Resets to `0` on every install. Attributes show what was last installed. |
-| **Last Installed** | `ESPHome 2025.5.1` | Name and version of the most recently installed update. Attributes include entity ID, type, from/to version, and install date. |
-| **Updates Released This Week** | `4` | Number of pending updates released in the last 7 days. Spikes after major HA releases. |
-| **Major Version Updates Pending** | `1` | Count of updates where the major version number changed — a proxy for breaking changes. Attributes list the specific updates. |
-| **History Log Size** | `48 KB` | Size of the persistent storage file on disk. Use in automations to alert when the log grows unexpectedly large. |
-| **Total Installs** | `312` | Lifetime count of all tracked installs in the retained history. |
-| **Avg Days Release to Install** | `4.2 days` | Average time between a release being published and you installing it — your personal update hygiene score. |
-| **Longest Gap Without Update** | `34 days` | All-time record of the longest gap between consecutive installs — your personal best on the "accident counter". |
-| **Most Updated Integration** | `ESPHome` | The integration you have updated most often. Attributes include the install count and entity ID. |
+| **Pending Updates**<br>`sensor.advanced_update_manager_pending_updates` | `7` | Total pending updates. Attributes include per-type counts: `core`, `haos`, `addon`, `hacs`, `device`, `other`. Ideal for sidebar badges or notification automations. |
+| **Oldest Pending Update**<br>`sensor.advanced_update_manager_oldest_pending_update` | `47 days` | Age in days of the oldest available update (based on release date). Attributes identify the specific update. |
+| **All Pending Updates**<br>`sensor.advanced_update_manager_all_pending_updates` | `7` | Full list of all pending updates exposed as the `pending_updates` attribute, sorted oldest-first. Each item includes `entity_id`, `title`, `type`, `installed_version`, `latest_version`, `release_date`, `days_pending`, `major_version_change`, `release_url`, and `skipped`. Use in notification automations to list every pending update, or filter in templates by type, age, or whether the version was skipped. |
+| **Days Since Last Install**<br>`sensor.advanced_update_manager_days_since_last_install` | `12 days` | The "accident counter" — days since anything was installed. Resets to `0` on every install. Attributes show what was last installed. |
+| **Last Installed**<br>`sensor.advanced_update_manager_last_installed` | `ESPHome 2025.5.1` | Name and version of the most recently installed update. Attributes include entity ID, type, from/to version, and install date. |
+| **Updates Released This Week**<br>`sensor.advanced_update_manager_updates_released_this_week` | `4` | Number of pending updates released in the last 7 days. Spikes after major HA releases. |
+| **Major Version Updates Pending**<br>`sensor.advanced_update_manager_major_version_updates_pending` | `1` | Count of updates where the major version number changed — a proxy for breaking changes. Attributes list the specific updates. |
+| **History Log Size**<br>`sensor.advanced_update_manager_history_log_size` | `48 KB` | Size of the persistent storage file on disk. Use in automations to alert when the log grows unexpectedly large. |
+| **Total Installs**<br>`sensor.advanced_update_manager_total_installs` | `312` | Lifetime count of all tracked installs in the retained history. |
+| **Avg Days Release to Install**<br>`sensor.advanced_update_manager_avg_days_release_to_install` | `4.2 days` | Average time between a release being published and you installing it — your personal update hygiene score. |
+| **Longest Gap Without Update**<br>`sensor.advanced_update_manager_longest_gap_without_update` | `34 days` | All-time record of the longest gap between consecutive installs — your personal best on the "accident counter". |
+| **Most Updated Integration**<br>`sensor.advanced_update_manager_most_updated_integration` | `ESPHome` | The integration you have updated most often. Attributes include the install count and entity ID. |
 
 ## Automation & Dashboard Examples
 
-The `sensor.all_pending_updates` sensor exposes all pending updates as a list in the `pending_updates` attribute. Below are ready-to-use examples.
+The `sensor.advanced_update_manager_all_pending_updates` sensor exposes all pending updates as a list in the `pending_updates` attribute. Below are ready-to-use examples.
 
 ### Daily digest notification
 
@@ -74,14 +76,14 @@ trigger:
     at: "09:00:00"
 condition:
   - condition: numeric_state
-    entity_id: sensor.all_pending_updates
+    entity_id: sensor.advanced_update_manager_all_pending_updates
     above: 0
 action:
   - service: notify.mobile_app_your_phone
     data:
-      title: "{{ states('sensor.all_pending_updates') }} pending updates"
+      title: "{{ states('sensor.advanced_update_manager_all_pending_updates') }} pending updates"
       message: >
-        {% set updates = state_attr('sensor.all_pending_updates', 'pending_updates') %}
+        {% set updates = state_attr('sensor.advanced_update_manager_all_pending_updates', 'pending_updates') %}
         {% for u in updates if not u.skipped %}
         • {{ u.title }} ({{ u.type }}) — {{ u.days_pending }} days old
         {% endfor %}
@@ -97,17 +99,17 @@ Fires as soon as a breaking update appears — useful for Core or add-ons where 
 alias: Alert on major version update
 trigger:
   - platform: state
-    entity_id: sensor.all_pending_updates
+    entity_id: sensor.advanced_update_manager_all_pending_updates
 action:
   - condition: template
     value_template: >
-      {{ state_attr('sensor.all_pending_updates', 'pending_updates')
+      {{ state_attr('sensor.advanced_update_manager_all_pending_updates', 'pending_updates')
          | selectattr('major_version_change', 'eq', true) | list | count > 0 }}
   - service: notify.mobile_app_your_phone
     data:
       title: "Breaking update available"
       message: >
-        {% set updates = state_attr('sensor.all_pending_updates', 'pending_updates') %}
+        {% set updates = state_attr('sensor.advanced_update_manager_all_pending_updates', 'pending_updates') %}
         {% for u in updates if u.major_version_change %}
         ⚠️ {{ u.title }}: {{ u.installed_version }} → {{ u.latest_version }}
         {% if u.release_url %}{{ u.release_url }}{% endif %}
@@ -128,7 +130,7 @@ trigger:
 action:
   - condition: template
     value_template: >
-      {{ state_attr('sensor.all_pending_updates', 'pending_updates')
+      {{ state_attr('sensor.advanced_update_manager_all_pending_updates', 'pending_updates')
          | selectattr('skipped', 'eq', false)
          | selectattr('days_pending', 'defined')
          | selectattr('days_pending', 'gt', 14) | list | count > 0 }}
@@ -136,7 +138,7 @@ action:
     data:
       title: "Updates waiting over 14 days"
       message: >
-        {% set updates = state_attr('sensor.all_pending_updates', 'pending_updates') %}
+        {% set updates = state_attr('sensor.advanced_update_manager_all_pending_updates', 'pending_updates') %}
         {% for u in updates if not u.skipped and u.days_pending and u.days_pending > 14 %}
         • {{ u.title }} — {{ u.days_pending }} days
         {% endfor %}
@@ -152,8 +154,7 @@ Shows all pending updates (excluding skipped) as a formatted table in any Lovela
 type: markdown
 content: >
   ## Pending Updates
-
-  {% set updates = state_attr('sensor.all_pending_updates', 'pending_updates') %}
+  {% set updates = state_attr('sensor.advanced_update_manager_all_pending_updates', 'pending_updates') %}
   {% set visible = updates | selectattr('skipped', 'eq', false) | list %}
   {% if visible %}
   | Name | Type | Waiting |
