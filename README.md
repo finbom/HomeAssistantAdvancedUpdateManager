@@ -59,6 +59,115 @@ Advanced Update Manager creates a set of HA sensor entities grouped under a sing
 | **Longest Gap Without Update** | `34 days` | All-time record of the longest gap between consecutive installs — your personal best on the "accident counter". |
 | **Most Updated Integration** | `ESPHome` | The integration you have updated most often. Attributes include the install count and entity ID. |
 
+## Automation & Dashboard Examples
+
+The `sensor.all_pending_updates` sensor exposes all pending updates as a list in the `pending_updates` attribute. Below are ready-to-use examples.
+
+### Daily digest notification
+
+Sends a morning summary of everything waiting to be installed. Skipped versions are excluded.
+
+```yaml
+alias: Daily pending update digest
+trigger:
+  - platform: time
+    at: "09:00:00"
+condition:
+  - condition: numeric_state
+    entity_id: sensor.all_pending_updates
+    above: 0
+action:
+  - service: notify.mobile_app_your_phone
+    data:
+      title: "{{ states('sensor.all_pending_updates') }} pending updates"
+      message: >
+        {% set updates = state_attr('sensor.all_pending_updates', 'pending_updates') %}
+        {% for u in updates if not u.skipped %}
+        • {{ u.title }} ({{ u.type }}) — {{ u.days_pending }} days old
+        {% endfor %}
+```
+
+---
+
+### Immediate alert for major version changes
+
+Fires as soon as a breaking update appears — useful for Core or add-ons where a major bump may require manual action.
+
+```yaml
+alias: Alert on major version update
+trigger:
+  - platform: state
+    entity_id: sensor.all_pending_updates
+action:
+  - condition: template
+    value_template: >
+      {{ state_attr('sensor.all_pending_updates', 'pending_updates')
+         | selectattr('major_version_change', 'eq', true) | list | count > 0 }}
+  - service: notify.mobile_app_your_phone
+    data:
+      title: "Breaking update available"
+      message: >
+        {% set updates = state_attr('sensor.all_pending_updates', 'pending_updates') %}
+        {% for u in updates if u.major_version_change %}
+        ⚠️ {{ u.title }}: {{ u.installed_version }} → {{ u.latest_version }}
+        {% if u.release_url %}{{ u.release_url }}{% endif %}
+        {% endfor %}
+```
+
+---
+
+### Nag when updates have been waiting too long
+
+Reminds you every morning about updates that have been available for more than 14 days and haven't been skipped.
+
+```yaml
+alias: Nag for stale updates
+trigger:
+  - platform: time
+    at: "09:00:00"
+action:
+  - condition: template
+    value_template: >
+      {{ state_attr('sensor.all_pending_updates', 'pending_updates')
+         | selectattr('skipped', 'eq', false)
+         | selectattr('days_pending', 'defined')
+         | selectattr('days_pending', 'gt', 14) | list | count > 0 }}
+  - service: notify.mobile_app_your_phone
+    data:
+      title: "Updates waiting over 14 days"
+      message: >
+        {% set updates = state_attr('sensor.all_pending_updates', 'pending_updates') %}
+        {% for u in updates if not u.skipped and u.days_pending and u.days_pending > 14 %}
+        • {{ u.title }} — {{ u.days_pending }} days
+        {% endfor %}
+```
+
+---
+
+### Dashboard markdown card
+
+Shows all pending updates (excluding skipped) as a formatted table in any Lovelace dashboard.
+
+```yaml
+type: markdown
+content: >
+  ## Pending Updates
+
+  {% set updates = state_attr('sensor.all_pending_updates', 'pending_updates') %}
+  {% set visible = updates | selectattr('skipped', 'eq', false) | list %}
+  {% if visible %}
+  | Name | Type | Waiting |
+  |------|------|---------|
+  {% for u in visible %}
+  | {{ u.title }} | {{ u.type }} | {{ u.days_pending if u.days_pending != none else '?' }} days |
+  {% endfor %}
+  {% else %}
+  ✅ No pending updates.
+  {% endif %}
+```
+
+---
+
 ## Update types
 
 | Badge | Meaning |
