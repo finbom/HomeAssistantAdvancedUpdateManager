@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# Release build artifacts (uploaded as GitHub release assets, not tracked here)
+*.zip
