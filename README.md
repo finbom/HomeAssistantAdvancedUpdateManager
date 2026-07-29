@@ -103,7 +103,7 @@ trigger:
 action:
   - condition: template
     value_template: >
-      {{ state_attr('sensor.advanced_update_manager_all_pending_updates', 'pending_updates')
+      {{ state_attr('sensor.advanced_update_manager_all_pending_updates', 'pending_updates') | default([], true)
          | selectattr('major_version_change', 'eq', true) | list | count > 0 }}
   - service: notify.mobile_app_your_phone
     data:
@@ -130,9 +130,9 @@ trigger:
 action:
   - condition: template
     value_template: >
-      {{ state_attr('sensor.advanced_update_manager_all_pending_updates', 'pending_updates')
+      {{ state_attr('sensor.advanced_update_manager_all_pending_updates', 'pending_updates') | default([], true)
          | selectattr('skipped', 'eq', false)
-         | selectattr('days_pending', 'defined')
+         | rejectattr('days_pending', 'none')
          | selectattr('days_pending', 'gt', 14) | list | count > 0 }}
   - service: notify.mobile_app_your_phone
     data:
