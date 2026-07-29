@@ -63,7 +63,7 @@ Advanced Update Manager creates a set of HA sensor entities grouped under a sing
 
 ## Automation & Dashboard Examples
 
-The `sensor.advanced_update_manager_all_pending_updates` sensor exposes all pending updates as a list in the `pending_updates` attribute. Below are ready-to-use examples.
+The `sensor.advanced_update_manager_all_pending_updates` sensor exposes all pending updates as a list in the `pending_updates` attribute. Below are examples.
 
 ### Daily digest notification
 
