@@ -48,6 +48,7 @@ Advanced Update Manager creates a set of HA sensor entities grouped under a sing
 |--------|--------------|-------------|
 | **Pending Updates** | `7` | Total pending updates. Attributes include per-type counts: `core`, `haos`, `addon`, `hacs`, `device`, `other`. Ideal for sidebar badges or notification automations. |
 | **Oldest Pending Update** | `47 days` | Age in days of the oldest available update (based on release date). Attributes identify the specific update. |
+| **All Pending Updates** | `7` | Full list of all pending updates exposed as the `pending_updates` attribute, sorted oldest-first. Each item includes `entity_id`, `title`, `type`, `installed_version`, `latest_version`, `release_date`, `days_pending`, `major_version_change`, `release_url`, and `skipped`. Use in notification automations to list every pending update, or filter in templates by type, age, or whether the version was skipped. |
 | **Days Since Last Install** | `12 days` | The "accident counter" — days since anything was installed. Resets to `0` on every install. Attributes show what was last installed. |
 | **Last Installed** | `ESPHome 2025.5.1` | Name and version of the most recently installed update. Attributes include entity ID, type, from/to version, and install date. |
 | **Updates Released This Week** | `4` | Number of pending updates released in the last 7 days. Spikes after major HA releases. |

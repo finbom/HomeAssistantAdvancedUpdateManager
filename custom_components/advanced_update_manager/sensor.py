@@ -60,6 +60,7 @@ async def async_setup_entry(
     async_add_entities([
         AUMPendingTotalSensor(coordinator, entry.entry_id),
         AUMOldestPendingSensor(coordinator, entry.entry_id),
+        AUMAllPendingUpdatesSensor(coordinator, entry.entry_id),
         AUMDaysSinceLastInstallSensor(coordinator, entry.entry_id),
         AUMLastInstalledSensor(coordinator, entry.entry_id),
         AUMReleasedThisWeekSensor(coordinator, entry.entry_id),
@@ -163,6 +164,52 @@ class AUMOldestPendingSensor(_AUMSensor):
             "release_date": u.get("release_date", ""),
             "type": u.get("type", ""),
         }
+
+
+# ── 3b: All pending updates ───────────────────────────────────────────────────
+
+class AUMAllPendingUpdatesSensor(_AUMSensor):
+    _attr_name = "All Pending Updates"
+    _attr_icon = "mdi:format-list-bulleted"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: UpdateManagerCoordinator, entry_id: str) -> None:
+        super().__init__(coordinator, entry_id, "all_pending_updates")
+
+    @staticmethod
+    def _build_item(u: dict) -> dict:
+        today = date.today()
+        rd = _parse_date(u.get("release_date", ""))
+        days_pending = (today - rd).days if rd else None
+        m_old = _major(u.get("installed_version", ""))
+        m_new = _major(u.get("latest_version", ""))
+        return {
+            "entity_id": u.get("entity_id", ""),
+            "title": u.get("title", ""),
+            "type": u.get("type", ""),
+            "installed_version": u.get("installed_version", ""),
+            "latest_version": u.get("latest_version", ""),
+            "release_date": u.get("release_date", ""),
+            "days_pending": days_pending,
+            "major_version_change": (
+                m_old is not None and m_new is not None and m_new > m_old
+            ),
+            "release_url": u.get("release_url", ""),
+            "skipped": bool(
+                u.get("skipped_version")
+                and u["skipped_version"] == u.get("latest_version")
+            ),
+        }
+
+    @property
+    def native_value(self) -> int:
+        return len(self._pending)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        items = [self._build_item(u) for u in self._pending]
+        items.sort(key=lambda x: (x["days_pending"] is None, -(x["days_pending"] or 0)))
+        return {"pending_updates": items}
 
 
 # ── 4: Days since last install ────────────────────────────────────────────────
