@@ -95,6 +95,8 @@ action:
 
 Fires as soon as a breaking update appears — useful for Core or add-ons where a major bump may require manual action.
 
+Note that this keeps notifying while the update stays pending. A `state` trigger without `to:` also fires on attribute-only changes, and `days_pending` is recalculated on every coordinator refresh, so expect a reminder roughly once a day until you install or skip the update. If you would rather have a single alert each time the situation arises, trigger on `numeric_state` of `sensor.advanced_update_manager_major_version_updates_pending` with `above: 0` and drop the condition — the trade-off being that you get no new alert if a second breaking update shows up while the first is still pending.
+
 ```yaml
 alias: Alert on major version update
 trigger:
