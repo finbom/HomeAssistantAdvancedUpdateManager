@@ -9,11 +9,12 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import (
     BACKUP_TYPE_FULL, BACKUP_TYPE_ADDON_ONLY, CONF_DEFAULT_BACKUP_TYPE,
-    CONF_HISTORY_KEEP_DAYS, DOMAIN,
-    CORE_ENTITY_ID, HAOS_ENTITY_ID, HISTORY_KEEP_DAYS_DEFAULT,
+    CONF_ENABLE_FEELING_LUCKY, CONF_HISTORY_KEEP_DAYS, DOMAIN,
+    CORE_ENTITY_ID, HAOS_ENTITY_ID, HISTORY_KEEP_DAYS_DEFAULT, SUPERVISOR_ENTITY_ID,
     UPDATE_TYPE_ADDON, UPDATE_TYPE_CORE, UPDATE_TYPE_DEVICE,
-    UPDATE_TYPE_HACS, UPDATE_TYPE_HAOS, UPDATE_TYPE_OTHER,
+    UPDATE_TYPE_HACS, UPDATE_TYPE_HAOS, UPDATE_TYPE_OTHER, UPDATE_TYPE_SUPERVISOR,
 )
+from .feeling_lucky import _async_reboot_required
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,6 +24,8 @@ def _classify_entity(entity_id: str, entry: er.RegistryEntry | None) -> str:
         return UPDATE_TYPE_CORE
     if entity_id == HAOS_ENTITY_ID:
         return UPDATE_TYPE_HAOS
+    if entity_id == SUPERVISOR_ENTITY_ID:
+        return UPDATE_TYPE_SUPERVISOR
     if entry:
         if entry.platform == "hacs":
             return UPDATE_TYPE_HACS
@@ -43,6 +46,7 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_config)
     websocket_api.async_register_command(hass, ws_get_installed)
     websocket_api.async_register_command(hass, ws_get_history)
+    websocket_api.async_register_command(hass, ws_get_feeling_lucky_status)
 
 
 @websocket_api.websocket_command({
@@ -101,16 +105,34 @@ async def ws_get_config(hass: HomeAssistant, connection, msg: dict) -> None:
     entries = hass.config_entries.async_entries(DOMAIN)
     default_backup_type = BACKUP_TYPE_FULL
     history_keep_days = HISTORY_KEEP_DAYS_DEFAULT
+    feeling_lucky_enabled = False
     if entries:
         default_backup_type = entries[0].options.get(CONF_DEFAULT_BACKUP_TYPE, BACKUP_TYPE_FULL)
         history_keep_days = entries[0].options.get(CONF_HISTORY_KEEP_DAYS, HISTORY_KEEP_DAYS_DEFAULT)
+        feeling_lucky_enabled = entries[0].options.get(CONF_ENABLE_FEELING_LUCKY, False)
     storage = (hass.data.get(DOMAIN) or {}).get("storage")
     storage_size_bytes = storage.get_storage_size_bytes() if storage else 0
     connection.send_result(msg["id"], {
         "default_backup_type": default_backup_type,
         "history_keep_days": history_keep_days,
+        "feeling_lucky_enabled": feeling_lucky_enabled,
         "storage_size_bytes": storage_size_bytes,
+        "dev_build": DEV_BUILD_MARKER,
     })
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/get_feeling_lucky_status",
+})
+@websocket_api.async_response
+async def ws_get_feeling_lucky_status(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Return the combined OPCON + queue state, straight from storage.
+
+    Avoids the frontend having to guess sensor.opcon's actual entity_id
+    (which depends on how HA generated it at first registration).
+    """
+    storage = (hass.data.get(DOMAIN) or {}).get("storage")
+    connection.send_result(msg["id"], storage.get_feeling_lucky_state() if storage else {})
 
 
 @websocket_api.websocket_command({
@@ -211,8 +233,21 @@ async def ws_get_restart_info(hass: HomeAssistant, connection, msg: dict) -> Non
         except Exception:  # noqa: BLE001
             pass
 
+    # Independent of the HACS check above: Supervisor's own "reboot required"
+    # repair (e.g. after a HAOS update — Supervisor no longer auto-reboots,
+    # see home-assistant/supervisor#6978) is a completely different signal
+    # that HACS's pending_restart never covers, AND needs a different action
+    # (hassio.host_reboot reboots the host; homeassistant.restart only
+    # restarts Core and would leave the repair in place).
+    host_reboot_required = await _async_reboot_required(hass)
+    if host_reboot_required:
+        restart_required = True
+
     _LOGGER.debug("AUM restart_required=%s (hacs_check_done=%s)", restart_required, hacs_check_done)
-    connection.send_result(msg["id"], {"restart_required": restart_required})
+    connection.send_result(msg["id"], {
+        "restart_required": restart_required,
+        "host_reboot_required": host_reboot_required,
+    })
 
 
 @websocket_api.websocket_command({

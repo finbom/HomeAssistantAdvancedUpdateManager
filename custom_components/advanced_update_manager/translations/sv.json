@@ -1,0 +1,50 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Advanced Update Manager",
+        "description": "Klicka Skicka för att lägga till Update Manager-panelen i din Home Assistant-sidomeny."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Redan konfigurerad. Endast en instans tillåts."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Advanced Update Manager — Inställningar",
+        "data": {
+          "show_in_sidebar": "Visa i sidomenyn",
+          "default_backup_type": "Standard säkerhetskopieringstyp",
+          "history_keep_days": "Historik — hur länge den sparas",
+          "enable_feeling_lucky": "Aktivera Feeling Lucky-läge (Allow batch/multi-updates)"
+        }
+      }
+    }
+  },
+  "issues": {
+    "feeling_lucky_code_red": {
+      "title": "Feeling Lucky stoppades — Code Red",
+      "description": "Feeling Lucky-sekvensen stötte på ett problem och frös omedelbart för att undvika att göra mer skada:\n\n{error}\n\nÖppna Update Manager-panelen för att se exakt vad som hann bli klart, vad som var mitt i installation, och vad som aldrig startade. När du har undersökt felet, använd **Reset OPCON** (knappen eller `advanced_update_manager.reset_opcon`) för att rensa detta och tillåta nya körningar."
+    }
+  },
+  "selector": {
+    "default_backup_type": {
+      "options": {
+        "full": "Fullständig säkerhetskopia",
+        "addon_only": "Endast tillägg"
+      }
+    },
+    "history_keep_days": {
+      "options": {
+        "30": "30 dagar",
+        "90": "90 dagar",
+        "180": "180 dagar",
+        "365": "1 år",
+        "730": "2 år",
+        "0": "För evigt"
+      }
+    }
+  }
+}

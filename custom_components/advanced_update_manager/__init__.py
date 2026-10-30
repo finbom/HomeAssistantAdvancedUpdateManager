@@ -7,16 +7,18 @@ import logging
 import os
 from pathlib import Path
 
+import voluptuous as vol
 from homeassistant.components.frontend import async_remove_panel
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.panel_custom import async_register_panel
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import Event, HomeAssistant
+from homeassistant.core import CoreState, Event, HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
+    CONF_ENABLE_FEELING_LUCKY,
     CONF_HISTORY_KEEP_DAYS,
     CONF_SHOW_IN_SIDEBAR,
     DOMAIN,
@@ -26,8 +28,11 @@ from .const import (
     PANEL_JS,
     PANEL_TITLE,
     PANEL_URL_PATH,
+    SERVICE_RESET_OPCON,
+    SERVICE_START_FEELING_LUCKY,
 )
 from .coordinator import UpdateManagerCoordinator
+from .feeling_lucky import FeelingLuckyRunner
 from .storage import UpdateDateStorage
 from . import websocket_api
 
@@ -55,6 +60,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = UpdateManagerCoordinator(hass, storage)
     hass.data[DOMAIN]["coordinator"] = coordinator
     hass.data[DOMAIN]["storage"] = storage
+
+    feeling_lucky_enabled = entry.options.get(CONF_ENABLE_FEELING_LUCKY, False)
+    runner = FeelingLuckyRunner(hass, storage, enabled=feeling_lucky_enabled)
+    hass.data[DOMAIN]["feeling_lucky_runner"] = runner
+
+    if not hass.data[DOMAIN].get("services_registered"):
+        _async_register_feeling_lucky_services(hass)
+        hass.data[DOMAIN]["services_registered"] = True
+
+    if hass.state is CoreState.running:
+        # Entry set up while HA is already fully started (e.g. a reload) —
+        # the homeassistant_started event we'd otherwise wait for already
+        # fired, so check for a run to resume right away instead.
+        # (Deliberately not hass.is_running: that's also True during
+        # CoreState.starting, which would fire this too early on a normal
+        # boot — before other integrations' entities exist to poll.)
+        hass.async_create_task(runner.async_resume_if_needed())
+    else:
+        async def _on_started(_event: Event) -> None:
+            live_runner = hass.data.get(DOMAIN, {}).get("feeling_lucky_runner")
+            if live_runner:
+                await live_runner.async_resume_if_needed()
+
+        entry.async_on_unload(
+            hass.bus.async_listen_once("homeassistant_started", _on_started)
+        )
 
     if not hass.data[DOMAIN].get("static_paths_registered"):
         frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
@@ -120,7 +151,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_setup(hass)
     await coordinator.async_refresh()
 
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "button"])
 
     # Seed history from recorder (one-time, runs in background)
     if not storage.is_history_seeded():
@@ -183,13 +214,42 @@ async def _async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None
     await hass.config_entries.async_reload(entry.entry_id)
 
 
+def _async_register_feeling_lucky_services(hass: HomeAssistant) -> None:
+    """Register the two Feeling Lucky actions. Handlers look the runner up
+    from hass.data at call time (not captured in the closure) so they keep
+    working across a config entry reload, which replaces the runner instance.
+    """
+
+    async def _async_start_feeling_lucky(call: ServiceCall) -> None:
+        runner: FeelingLuckyRunner = hass.data[DOMAIN]["feeling_lucky_runner"]
+        await runner.async_start(call.data["entity_id"], call.data["backup"])
+
+    async def _async_reset_opcon(call: ServiceCall) -> None:
+        runner: FeelingLuckyRunner = hass.data[DOMAIN]["feeling_lucky_runner"]
+        await runner.async_reset_opcon()
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_START_FEELING_LUCKY,
+        _async_start_feeling_lucky,
+        schema=vol.Schema({
+            vol.Required("entity_id"): vol.All(cv.ensure_list, [cv.entity_id]),
+            vol.Optional("backup", default=True): cv.boolean,
+        }),
+    )
+    hass.services.async_register(DOMAIN, SERVICE_RESET_OPCON, _async_reset_opcon)
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     async_remove_panel(hass, PANEL_URL_PATH)
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor"])
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor", "button"])
     if unload_ok:
         static_flag = hass.data[DOMAIN].get("static_paths_registered")
+        services_flag = hass.data[DOMAIN].get("services_registered")
         hass.data[DOMAIN].clear()
         if static_flag:
             hass.data[DOMAIN]["static_paths_registered"] = True
+        if services_flag:
+            hass.data[DOMAIN]["services_registered"] = True
     return unload_ok

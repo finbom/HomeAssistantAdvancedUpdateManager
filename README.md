@@ -16,6 +16,7 @@ A HACS custom integration that adds a dedicated **Update Manager** panel to your
 - **Skip** a specific version without losing the update notification
 - **Real-time sync** — automatically reflects updates installed via the normal HA UI
 - **Sensor entities** — expose update statistics to dashboards, automations, and scripts
+- **🍀 Feeling Lucky mode** *(new, off by default)* — pick your pending updates and let AUM install them all, in a safe hardcoded order, unattended — see below
 
 ## Installation via HACS
 
@@ -39,6 +40,111 @@ A HACS custom integration that adds a dedicated **Update Manager** panel to your
 - It runs inside HA's own process and subscribes to `update.*` entity state changes
 - Release dates are fetched from the GitHub Releases API and stored persistently in `.storage/advanced_update_manager.json`
 - Updates installed via the normal HA UI are automatically removed from the panel's list
+
+## 🍀 Feeling Lucky mode
+
+Home Assistant's own "update all" has no concept of order — it just fires every install at once. **Feeling Lucky** picks which of your pending updates to include, then runs them one at a time in a deliberate, safety-conscious order, unattended, surviving restarts along the way.
+
+> **Off by default.** The engine has been validated end-to-end on a dedicated test instance: real HAOS/Core/HACS/add-on updates (including a real host reboot and a multi-version Core jump), "Make my crash" (no-backup mode), and a genuine deliberate failure correctly triggering Code Red and a Repairs issue. It's opt-in simply because it's new and does something powerful automatically — the usual "try it on a test instance first" caution applies to any new automation that installs updates unattended.
+
+It's **hidden until you turn it on**: go to **Settings → Devices & Services → Advanced Update Manager → Configure** and enable **"Enable Feeling Lucky mode (Allow batch/multi-updates)"**. The 🍀 button in the panel toolbar only appears once this is on.
+
+### How to use it
+
+1. Click **🍀 Feeling Lucky** in the panel toolbar (only visible once enabled in the integration's options — see above). A checkbox appears next to every eligible pending update — everything is pre-checked **except device firmware**, which is opt-in only (it's the highest-risk category, since a bad OTA can brick a device).
+2. An info box above the list explains the run order (collapsible — click **ⓘ Why this order?** any time to bring it back).
+3. Pick one of the two commit buttons:
+   - **Make my day — Install all selected with a Full backup** (the default, recommended path)
+   - **Make my crash — Install all selected, but No backup** (danger mode — requires ticking an extra "I understand" box first)
+4. A confirmation dialog shows the exact resolved order before anything runs.
+5. Confirm, then walk away. The run continues in the background even if you close the tab, and survives Home Assistant restarting itself mid-sequence (which Core and OS updates do).
+
+### The run order
+
+```
+Supervisor → HACS → Add-ons → Device firmware → HA OS → Core
+```
+
+- **Supervisor first** isn't a style choice — Home Assistant itself gates every other update on it.
+- Everything else runs **lowest-risk, most-reversible first**, saving the two steps that require a restart or a full host reboot (HA OS, then Core) for last — by the time they run, everything else is already confirmed healthy on the current platform.
+- Advanced Update Manager's own update is always excluded from the HACS phase — it doesn't update the code that's currently running the sequence.
+
+### When something goes wrong: OPCON and Code Red
+
+A new **OPCON** sensor tracks the health of the whole system: `ok` 🟢, `running` 🔵, or `critical` 🔴 (**Code Red**). The moment anything fails, the entire queue **freezes immediately** — nothing further starts, regardless of what phase it was in. This is deliberately a "blue screen," not a rollback: whatever already finished stays installed, and the frozen queue is left exactly as it was so you can see what completed, what was mid-install, and what never got a chance to start.
+
+While OPCON is Code Red, both commit buttons are disabled (you can still install things manually through HA's normal update UI — Feeling Lucky just won't start a *new* automated run). The only way back to green is the **Reset OPCON** button — there's no implicit reset, starting a new run won't clear a stuck one.
+
+A Code Red also raises a **Repairs** issue (**Settings → System → Repairs**) automatically — no setup needed. It clears itself when you hit Reset OPCON, so it can't go stale or drift out of sync with OPCON.
+
+### New entities
+
+| Entity | What it is |
+|--------|-----------|
+| **OPCON (Update Status)** sensor | `ok` / `running` / `critical`. Attributes: `last_error`, `since`, `backup_taken`. Deliberately a stable, automation-friendly state — safe to trigger alerts on. |
+| **Feeling Lucky Queue** sensor | State = number of steps not yet done (`0` when idle). Attributes: the full `steps` list (each with phase, status, and error if any), `current_item`, `started_at` — the detailed, live view of what's happening. |
+| **Reset OPCON (Clear Code Red)** button | Clears a Code Red and resets the queue. Also available as an action (below). |
+
+As with the other sensors in this integration, entity IDs are device-scoped — check **Developer Tools → States** filtered on `advanced_update_manager` for the exact IDs in your install.
+
+### New actions
+
+| Action | What it does |
+|--------|-------------|
+| `advanced_update_manager.start_feeling_lucky` | Starts a run. Fields: `entity_id` (list of update entities to include), `backup` (boolean, default `true` — set `false` for danger mode). Refuses to start while OPCON is Code Red. |
+| `advanced_update_manager.reset_opcon` | Clears Code Red and resets the queue — the same thing the button does, useful for automations. |
+
+### Notification automation examples
+
+The Repairs issue covers "something needs attention" if you check Settings regularly. For anything more immediate — a push to your phone, a dashboard banner — `sensor.opcon` is a plain state entity, so wire it up the same way as any other automation trigger. No extra configuration in the integration itself; pick whichever `notify.*` service you already use.
+
+**Push notification the moment Code Red hits:**
+
+```yaml
+alias: Notify on Feeling Lucky Code Red
+trigger:
+  - platform: state
+    entity_id: sensor.advanced_update_manager_opcon_update_status
+    to: "critical"
+action:
+  - service: notify.mobile_app_your_phone
+    data:
+      title: "🔴 Code Red — Feeling Lucky stopped"
+      message: "{{ state_attr('sensor.advanced_update_manager_opcon_update_status', 'last_error') }}"
+```
+
+**Persistent notification on the dashboard instead of (or alongside) a push:**
+
+```yaml
+alias: Persistent notification on Feeling Lucky Code Red
+trigger:
+  - platform: state
+    entity_id: sensor.advanced_update_manager_opcon_update_status
+    to: "critical"
+action:
+  - service: persistent_notification.create
+    data:
+      title: "Feeling Lucky — Code Red"
+      message: "{{ state_attr('sensor.advanced_update_manager_opcon_update_status', 'last_error') }}"
+      notification_id: aum_feeling_lucky_code_red
+```
+
+**Confirmation when a run finishes successfully** — useful since the whole point of Feeling Lucky is starting it and walking away:
+
+```yaml
+alias: Notify when Feeling Lucky finishes successfully
+trigger:
+  - platform: state
+    entity_id: sensor.advanced_update_manager_opcon_update_status
+    from: "running"
+    to: "ok"
+action:
+  - service: notify.mobile_app_your_phone
+    data:
+      message: "✅ Feeling Lucky finished — all selected updates installed."
+```
+
+> Entity IDs above assume the default device-scoped naming — check **Developer Tools → States** if yours differ.
 
 ## Sensors
 

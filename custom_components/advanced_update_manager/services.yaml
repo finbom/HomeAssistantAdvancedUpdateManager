@@ -1,0 +1,30 @@
+start_feeling_lucky:
+  name: Start Feeling Lucky
+  description: >-
+    Run the selected pending updates in the hardcoded safe order
+    (Supervisor -> HACS -> Add-ons -> Device firmware -> OS -> Core).
+    Refuses to start while OPCON is Code Red — reset it first.
+  fields:
+    entity_id:
+      name: Updates to install
+      description: The update entities to include in this run.
+      required: true
+      selector:
+        entity:
+          domain: update
+          multiple: true
+    backup:
+      name: Take a full backup first
+      description: >-
+        "Make my day" (on, default) vs "Make my crash" (off, danger mode) —
+        no backup is taken before the run when this is off.
+      required: false
+      default: true
+      selector:
+        boolean:
+
+reset_opcon:
+  name: Reset OPCON (Clear Code Red)
+  description: >-
+    The only way to clear a Code Red update-status alert. Resets OPCON to ok
+    and clears the frozen queue snapshot together.

@@ -17,9 +17,16 @@
         "data": {
           "show_in_sidebar": "Show in sidebar",
           "default_backup_type": "Default backup type",
-          "history_keep_days": "Install history retention"
+          "history_keep_days": "Install history retention",
+          "enable_feeling_lucky": "Enable Feeling Lucky mode (Allow batch/multi-updates)"
         }
       }
+    }
+  },
+  "issues": {
+    "feeling_lucky_code_red": {
+      "title": "Feeling Lucky stopped — Code Red",
+      "description": "The Feeling Lucky update sequence hit a problem and froze immediately to avoid making things worse:\n\n{error}\n\nOpen the Update Manager panel to see exactly what completed, what was mid-install, and what never started. Once you've investigated, use **Reset OPCON** (button or `advanced_update_manager.reset_opcon`) to clear this and allow new runs."
     }
   },
   "selector": {

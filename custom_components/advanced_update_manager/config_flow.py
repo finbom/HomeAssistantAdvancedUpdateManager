@@ -10,6 +10,7 @@ from .const import (
     BACKUP_TYPE_FULL,
     BACKUP_TYPE_ADDON_ONLY,
     CONF_DEFAULT_BACKUP_TYPE,
+    CONF_ENABLE_FEELING_LUCKY,
     CONF_HISTORY_KEEP_DAYS,
     CONF_SHOW_IN_SIDEBAR,
     DOMAIN,
@@ -49,6 +50,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         show_in_sidebar = self._config_entry.options.get(CONF_SHOW_IN_SIDEBAR, True)
         default_backup_type = self._config_entry.options.get(CONF_DEFAULT_BACKUP_TYPE, BACKUP_TYPE_FULL)
         history_keep_days = self._config_entry.options.get(CONF_HISTORY_KEEP_DAYS, HISTORY_KEEP_DAYS_DEFAULT)
+        enable_feeling_lucky = self._config_entry.options.get(CONF_ENABLE_FEELING_LUCKY, False)
 
         return self.async_show_form(
             step_id="init",
@@ -66,5 +68,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         translation_key=CONF_HISTORY_KEEP_DAYS,
                     )
                 ),
+                vol.Required(CONF_ENABLE_FEELING_LUCKY, default=enable_feeling_lucky): bool,
             }),
         )

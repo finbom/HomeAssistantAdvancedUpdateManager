@@ -5,9 +5,22 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
 
-from .const import STORAGE_KEY, STORAGE_VERSION
+from .const import FL_OPCON_OK, SIGNAL_FEELING_LUCKY_UPDATED, STORAGE_KEY, STORAGE_VERSION
+
+_FL_DEFAULT = {
+    "opcon": FL_OPCON_OK,
+    "last_error": None,
+    "since": None,
+    "backup_taken": None,
+    "queue": {
+        "steps": [],
+        "current_item": None,
+        "started_at": None,
+    },
+}
 
 
 class UpdateDateStorage:
@@ -18,6 +31,7 @@ class UpdateDateStorage:
         self._urls: dict[str, str] = {}
         self._install_history: list[dict] = []
         self._history_seeded: bool = False
+        self._feeling_lucky: dict = dict(_FL_DEFAULT)
 
     async def async_load(self) -> None:
         data = await self._store.async_load() or {}
@@ -25,6 +39,7 @@ class UpdateDateStorage:
         self._urls = data.get("urls", {})
         self._install_history = data.get("install_history", [])
         self._history_seeded = data.get("history_seeded", False)
+        self._feeling_lucky = {**_FL_DEFAULT, **data.get("feeling_lucky", {})}
 
     async def _async_save(self) -> None:
         await self._store.async_save({
@@ -32,7 +47,28 @@ class UpdateDateStorage:
             "urls": self._urls,
             "install_history": self._install_history,
             "history_seeded": self._history_seeded,
+            "feeling_lucky": self._feeling_lucky,
         })
+
+    # --- Feeling Lucky: OPCON + queue (frozen together, reset together) ---
+
+    def get_feeling_lucky_state(self) -> dict:
+        """Return a copy of the combined OPCON + queue state."""
+        return dict(self._feeling_lucky)
+
+    async def async_save_feeling_lucky_state(self, state: dict) -> None:
+        """Persist the full OPCON + queue state. Called before every step runs
+        so a run survives HA dying mid-update (e.g. a Core/OS restart)."""
+        self._feeling_lucky = dict(state)
+        await self._async_save()
+        async_dispatcher_send(self._hass, SIGNAL_FEELING_LUCKY_UPDATED)
+
+    async def async_reset_feeling_lucky_state(self) -> None:
+        """'Reset OPCON' — the only way back to green. Clears both the status
+        and the frozen queue snapshot together."""
+        self._feeling_lucky = dict(_FL_DEFAULT)
+        await self._async_save()
+        async_dispatcher_send(self._hass, SIGNAL_FEELING_LUCKY_UPDATED)
 
     # --- Release dates ---
 

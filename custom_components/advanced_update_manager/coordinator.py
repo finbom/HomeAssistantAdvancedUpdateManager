@@ -13,12 +13,14 @@ from .const import (
     CORE_ENTITY_ID,
     DOMAIN,
     HAOS_ENTITY_ID,
+    SUPERVISOR_ENTITY_ID,
     UPDATE_TYPE_ADDON,
     UPDATE_TYPE_CORE,
     UPDATE_TYPE_DEVICE,
     UPDATE_TYPE_HACS,
     UPDATE_TYPE_HAOS,
     UPDATE_TYPE_OTHER,
+    UPDATE_TYPE_SUPERVISOR,
 )
 
 from .github_client import extract_monorepo_subpath, extract_owner_repo, fetch_addon_config_date, fetch_ha_addon_registry_date, fetch_pypi_release_date, fetch_release_date, fetch_supervisor_addon_info
@@ -60,12 +62,13 @@ def _is_major_version_change(installed: str, latest: str) -> bool:
 
 
 TYPE_ORDER = {
-    UPDATE_TYPE_CORE: 0,
-    UPDATE_TYPE_HAOS: 1,
-    UPDATE_TYPE_ADDON: 2,
-    UPDATE_TYPE_HACS: 3,
-    UPDATE_TYPE_DEVICE: 4,
-    UPDATE_TYPE_OTHER: 5,
+    UPDATE_TYPE_SUPERVISOR: 0,
+    UPDATE_TYPE_CORE: 1,
+    UPDATE_TYPE_HAOS: 2,
+    UPDATE_TYPE_ADDON: 3,
+    UPDATE_TYPE_HACS: 4,
+    UPDATE_TYPE_DEVICE: 5,
+    UPDATE_TYPE_OTHER: 6,
 }
 
 
@@ -288,6 +291,8 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
             return UPDATE_TYPE_CORE
         if entity_id == HAOS_ENTITY_ID:
             return UPDATE_TYPE_HAOS
+        if entity_id == SUPERVISOR_ENTITY_ID:
+            return UPDATE_TYPE_SUPERVISOR
 
         if entry:
             if entry.platform == "hacs":

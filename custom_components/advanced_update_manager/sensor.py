@@ -7,25 +7,32 @@ from datetime import date, timedelta
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfInformation
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DOMAIN,
+    FL_OPCON_OK,
+    FL_STEP_DONE,
+    SIGNAL_FEELING_LUCKY_UPDATED,
     UPDATE_TYPE_ADDON,
     UPDATE_TYPE_CORE,
     UPDATE_TYPE_DEVICE,
     UPDATE_TYPE_HACS,
     UPDATE_TYPE_HAOS,
     UPDATE_TYPE_OTHER,
+    UPDATE_TYPE_SUPERVISOR,
 )
 from .coordinator import UpdateManagerCoordinator
+from .storage import UpdateDateStorage
 
 _LOGGER = logging.getLogger(__name__)
 
 _ALL_TYPES = [
+    UPDATE_TYPE_SUPERVISOR,
     UPDATE_TYPE_CORE,
     UPDATE_TYPE_HAOS,
     UPDATE_TYPE_ADDON,
@@ -57,6 +64,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: UpdateManagerCoordinator = hass.data[DOMAIN]["coordinator"]
+    storage: UpdateDateStorage = hass.data[DOMAIN]["storage"]
     async_add_entities([
         AUMPendingTotalSensor(coordinator, entry.entry_id),
         AUMOldestPendingSensor(coordinator, entry.entry_id),
@@ -70,6 +78,8 @@ async def async_setup_entry(
         AUMAvgDaysReleaseToInstallSensor(coordinator, entry.entry_id),
         AUMLongestStreakSensor(coordinator, entry.entry_id),
         AUMMostUpdatedSensor(coordinator, entry.entry_id),
+        AUMOpconSensor(storage, entry.entry_id),
+        AUMFeelingLuckyQueueSensor(storage, entry.entry_id),
     ])
 
 
@@ -471,4 +481,99 @@ class AUMMostUpdatedSensor(_AUMSensor):
             "install_count": top["count"],
             "entity_id": top["entity_id"],
             "type": top["type"],
+        }
+
+
+# ── Feeling Lucky: OPCON + queue ──────────────────────────────────────────
+# These two are plain SensorEntity (not CoordinatorEntity) — they reflect
+# storage state that the Feeling Lucky runner writes directly, and update
+# instantly via dispatcher signal rather than waiting on the coordinator's
+# poll cycle.
+
+class _AUMFeelingLuckySensor(SensorEntity):
+    """Base for the two Feeling Lucky status sensors."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    def __init__(self, storage: UpdateDateStorage, entry_id: str, key: str) -> None:
+        self._storage = storage
+        self._attr_unique_id = f"{entry_id}_{key}"
+        self._entry_id = entry_id
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name="Advanced Update Manager",
+            manufacturer="Magnus Finbom",
+            entry_type=DeviceEntryType.SERVICE,
+        )
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, SIGNAL_FEELING_LUCKY_UPDATED, self._handle_update)
+        )
+
+    @callback
+    def _handle_update(self) -> None:
+        self.async_write_ha_state()
+
+
+class AUMOpconSensor(_AUMFeelingLuckySensor):
+    """Stable, automation-safe status: ok / running / critical only — never
+    embed step counts or changing text in the state itself."""
+
+    _attr_name = "OPCON (Update Status)"
+    _attr_icon = "mdi:shield-alert-outline"
+
+    def __init__(self, storage: UpdateDateStorage, entry_id: str) -> None:
+        super().__init__(storage, entry_id, "opcon")
+
+    @property
+    def native_value(self) -> str:
+        return self._storage.get_feeling_lucky_state().get("opcon", FL_OPCON_OK)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        state = self._storage.get_feeling_lucky_state()
+        return {
+            "last_error": state.get("last_error"),
+            "since": state.get("since"),
+            "backup_taken": state.get("backup_taken"),
+        }
+
+
+class AUMFeelingLuckyQueueSensor(_AUMFeelingLuckySensor):
+    """The living, detailed view of the current/last Feeling Lucky run.
+
+    State is the count of steps not yet done (0 = idle/empty) — on Code Red
+    the queue freezes as-is rather than clearing, so this stays non-zero and
+    the attributes below show exactly what completed, what was running, and
+    what never got a chance to start.
+    """
+
+    _attr_name = "Feeling Lucky Queue"
+    _attr_icon = "mdi:playlist-check"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, storage: UpdateDateStorage, entry_id: str) -> None:
+        super().__init__(storage, entry_id, "feeling_lucky_queue")
+
+    @property
+    def _queue(self) -> dict:
+        return self._storage.get_feeling_lucky_state().get("queue", {})
+
+    @property
+    def native_value(self) -> int:
+        steps = self._queue.get("steps", [])
+        return sum(1 for s in steps if s.get("status") != FL_STEP_DONE)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        queue = self._queue
+        return {
+            "steps": queue.get("steps", []),
+            "current_item": queue.get("current_item"),
+            "started_at": queue.get("started_at"),
         }

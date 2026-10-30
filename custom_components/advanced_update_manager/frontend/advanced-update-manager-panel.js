@@ -2,6 +2,19 @@
  * Advanced Update Manager — Custom Panel
  * Displays all pending HA updates with type, release date, and action buttons.
  */
+// This script is itself loaded with a `?v=<manifest version>` cache-buster
+// (see js_url in __init__.py). Reusing that same query string on the
+// translations fetch below keeps the two in sync — otherwise the browser
+// can serve a stale cached translations/*.json even right after fetching a
+// brand-new version of this very file.
+const _SCRIPT_VERSION_QUERY = (() => {
+  try {
+    return new URL(document.currentScript?.src || "", window.location.href).search;
+  } catch {
+    return "";
+  }
+})();
+
 class AdvancedUpdateManagerPanel extends HTMLElement {
   constructor() {
     super();
@@ -18,6 +31,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     this._t = {};
     this._config = {};
     this._restartRequired = false;
+    this._hostRebootRequired = false;
     this._showSkipped = false;
     this._skippedUpdates = [];
     this._sortBy = "type";   // "type" | "date"
@@ -32,6 +46,17 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     this._historyOldestDate = null;
     this._historyRecorderAvailable = true;
     this._historyLoading = false;
+    // Feeling Lucky
+    this._flStatus = { opcon: "ok", last_error: null, since: null, backup_taken: null, queue: { steps: [], current_item: null, started_at: null } };
+    this._flActive = false;
+    this._flSelected = new Set();
+    this._flInfoCollapsed = false;
+    try {
+      this._flInfoCollapsed = localStorage.getItem("aum_fl_info_collapsed") === "1";
+    } catch { /* localStorage unavailable, keep default */ }
+    this._flConfirm = null;  // { backup: boolean }
+    this._flDangerAck = false;
+    this._flBusy = false;
   }
 
   set hass(hass) {
@@ -48,20 +73,40 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   async _init() {
     this._render();
     await this._loadTranslations();
-    await Promise.all([this._fetchUpdates(), this._fetchRestartInfo(), this._loadConfig()]);
-    this._subscribeStateChanges();
+    await Promise.all([
+      this._fetchUpdates(),
+      this._fetchRestartInfo(),
+      this._loadConfig(),
+      this._fetchFeelingLuckyStatus(),
+    ]);
+    await this._subscribeStateChanges();
+  }
+
+  async _fetchFeelingLuckyStatus() {
+    try {
+      const result = await this._hass.connection.sendMessagePromise({
+        type: "advanced_update_manager/get_feeling_lucky_status",
+      });
+      this._flStatus = Object.assign(
+        { opcon: "ok", last_error: null, since: null, backup_taken: null, queue: { steps: [], current_item: null, started_at: null } },
+        result,
+      );
+    } catch (e) {
+      console.error("[AdvancedUpdateManager] feeling lucky status fetch failed", e);
+    }
+    this._render();
   }
 
   async _loadTranslations() {
     const lang = this._hass.locale?.language ?? "en";
     const base = "/advanced_update_manager_panel/translations/";
     try {
-      const res = await fetch(`${base}${lang}.json`);
+      const res = await fetch(`${base}${lang}.json${_SCRIPT_VERSION_QUERY}`);
       if (!res.ok) throw new Error("not found");
       this._t = await res.json();
     } catch {
       try {
-        const res = await fetch(`${base}en.json`);
+        const res = await fetch(`${base}en.json${_SCRIPT_VERSION_QUERY}`);
         this._t = await res.json();
       } catch {
         this._t = {};
@@ -76,7 +121,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       });
       this._config = result;
     } catch {
-      this._config = { default_backup_type: "full" };
+      this._config = { default_backup_type: "full", feeling_lucky_enabled: false };
     }
   }
 
@@ -107,6 +152,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         type: "advanced_update_manager/get_restart_info",
       });
       this._restartRequired = result.restart_required || false;
+      this._hostRebootRequired = result.host_reboot_required || false;
     } catch (e) {
       console.error("[AdvancedUpdateManager] restart check failed", e);
     }
@@ -172,10 +218,25 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     }
   }
 
-  _subscribeStateChanges() {
-    this._unsubscribe = this._hass.connection.subscribeEvents((event) => {
+  async _subscribeStateChanges() {
+    // subscribeEvents is async and resolves to the unsubscribe function —
+    // it must be awaited, otherwise this._unsubscribe ends up holding the
+    // pending Promise instead of a callable, and disconnectedCallback's
+    // this._unsubscribe() throws "not a function".
+    this._unsubscribe = await this._hass.connection.subscribeEvents((event) => {
       const entityId = event.data?.entity_id;
       if (!entityId) return;
+
+      if (entityId.includes("opcon") || entityId.includes("feeling_lucky_queue")) {
+        // Also refresh restart info: a Feeling Lucky run waiting on a HAOS
+        // reboot needs the restart banner (with its "Reboot Host" button) to
+        // show up promptly, not just whenever something else triggers a
+        // refresh — that's the manual fallback if the automatic
+        // hassio.host_reboot attempt doesn't visibly take effect.
+        this._fetchFeelingLuckyStatus();
+        this._fetchRestartInfo();
+        return;
+      }
 
       if (entityId.startsWith("update.")) {
         const oldState = event.data?.old_state?.state;
@@ -285,11 +346,15 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   async _doRestart() {
     this._confirm = null;
     this._render();
+    // A Supervisor "reboot required" repair (e.g. after a HAOS update) needs
+    // hassio.host_reboot — homeassistant.restart only restarts Core and
+    // would leave the actual repair in place.
+    const useHostReboot = this._hostRebootRequired;
     try {
       await this._hass.connection.sendMessagePromise({
         type: "call_service",
-        domain: "homeassistant",
-        service: "restart",
+        domain: useHostReboot ? "hassio" : "homeassistant",
+        service: useHostReboot ? "host_reboot" : "restart",
         service_data: {},
       });
     } catch (e) {
@@ -376,28 +441,121 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     }
   }
 
+  // ── Feeling Lucky ────────────────────────────────────────────────────────
+
+  static FL_PHASE_ORDER = { supervisor: 0, hacs: 1, addon: 2, device: 3, haos: 4, core: 5 };
+
+  _toggleFeelingLucky() {
+    this._flActive = !this._flActive;
+    if (this._flActive) {
+      // Always reset to default on open — never remember the last selection.
+      this._flSelected = new Set(
+        this._updates.filter((u) => u.type !== "device").map((u) => u.entity_id)
+      );
+    }
+    this._render();
+  }
+
+  _toggleFlSelected(entityId) {
+    if (this._flSelected.has(entityId)) this._flSelected.delete(entityId);
+    else this._flSelected.add(entityId);
+    this._render();
+  }
+
+  _toggleFlInfo() {
+    this._flInfoCollapsed = !this._flInfoCollapsed;
+    try {
+      localStorage.setItem("aum_fl_info_collapsed", this._flInfoCollapsed ? "1" : "0");
+    } catch { /* localStorage unavailable, just keep the in-memory value */ }
+    this._render();
+  }
+
+  _flResolvedSteps() {
+    const order = AdvancedUpdateManagerPanel.FL_PHASE_ORDER;
+    return this._updates
+      .filter((u) => this._flSelected.has(u.entity_id) && Object.hasOwn(order, u.type))
+      .sort((a, b) => order[a.type] - order[b.type]);
+  }
+
+  _requestFeelingLucky(backup) {
+    this._flDangerAck = false;
+    this._flConfirm = { backup };
+    this._render();
+  }
+
+  _cancelFlConfirm() {
+    this._flConfirm = null;
+    this._render();
+  }
+
+  _toggleFlDangerAck() {
+    this._flDangerAck = !this._flDangerAck;
+    this._render();
+  }
+
+  async _doFeelingLucky() {
+    const { backup } = this._flConfirm;
+    const entityIds = this._flResolvedSteps().map((u) => u.entity_id);
+    this._flConfirm = null;
+    this._flActive = false;
+    this._flBusy = true;
+    this._render();
+    try {
+      await this._hass.connection.sendMessagePromise({
+        type: "call_service",
+        domain: "advanced_update_manager",
+        service: "start_feeling_lucky",
+        service_data: { entity_id: entityIds, backup },
+      });
+    } catch (e) {
+      console.error("[AdvancedUpdateManager] start_feeling_lucky failed", e);
+    }
+    this._flBusy = false;
+    await this._fetchFeelingLuckyStatus();
+  }
+
+  async _resetOpcon() {
+    try {
+      await this._hass.connection.sendMessagePromise({
+        type: "call_service",
+        domain: "advanced_update_manager",
+        service: "reset_opcon",
+        service_data: {},
+      });
+    } catch (e) {
+      console.error("[AdvancedUpdateManager] reset_opcon failed", e);
+    }
+    await this._fetchFeelingLuckyStatus();
+  }
+
   _typeLabel(type) {
-    return { core: "Core", haos: "HA OS", addon: "Apps", hacs: "HACS", device: "Device", other: "Other" }[type] || type;
+    return { supervisor: "Supervisor", core: "Core", haos: "HA OS", addon: "Apps", hacs: "HACS", device: "Device", other: "Other" }[type] || type;
   }
 
   _typeColor(type) {
-    return { core: "#03a9f4", haos: "#4caf50", addon: "#ff9800", hacs: "#9c27b0", device: "#607d8b", other: "#9e9e9e" }[type] || "#9e9e9e";
+    return { supervisor: "#795548", core: "#03a9f4", haos: "#4caf50", addon: "#ff9800", hacs: "#9c27b0", device: "#607d8b", other: "#9e9e9e" }[type] || "#9e9e9e";
   }
 
   _renderRestartBanner() {
     if (!this._restartRequired) return "";
     const isAdmin = this._hass.user?.is_admin ?? false;
+    const text = this._hostRebootRequired
+      ? this._tr("host_reboot_banner", "The host needs to be rebooted for a recent OS update to take effect.")
+      : this._tr("restart_banner", "Home Assistant needs to be restarted for recent changes to take effect.");
+    const btnLabel = this._hostRebootRequired
+      ? this._tr("host_reboot_btn", "Reboot Host")
+      : this._tr("restart_btn", "Restart Home Assistant");
     return `
       <div class="restart-banner">
         <span class="restart-icon">⚠</span>
-        <span class="restart-text">${this._tr("restart_banner", "Home Assistant needs to be restarted for recent changes to take effect.")}</span>
+        <span class="restart-text">${text}</span>
         ${isAdmin
-          ? `<button class="btn btn-restart" onclick="this.getRootNode().host._requestRestart()">${this._tr("restart_btn", "Restart Home Assistant")}</button>`
+          ? `<button class="btn btn-restart" onclick="this.getRootNode().host._requestRestart()">${btnLabel}</button>`
           : ""}
       </div>`;
   }
 
-  _renderUpdateRow(u, showTypeBadge = false) {
+  _renderUpdateRow(u, showTypeBadge = false, flMode = false) {
     const isInstalling = this._installing.has(u.entity_id) || u.in_progress;
     const isBackupInstall = this._installingWithBackup.has(u.entity_id);
     const isNotInstallable = u.installable === false;
@@ -446,8 +604,16 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           <button class="btn btn-skip" onclick="this.getRootNode().host._requestSkip('${this._escHtml(u.entity_id)}')" title="${this._tr("btn_skip_title", "Skip this version")}">${this._tr("btn_skip", "Skip")}</button>
         `;
 
+    const flEligible = flMode && Object.hasOwn(AdvancedUpdateManagerPanel.FL_PHASE_ORDER, u.type);
+    const flCell = flMode
+      ? flEligible
+        ? `<td class="fl-checkbox-cell"><input type="checkbox" ${this._flSelected.has(u.entity_id) ? "checked" : ""} onchange="this.getRootNode().host._toggleFlSelected('${this._escHtml(u.entity_id)}')"></td>`
+        : `<td class="fl-checkbox-cell"><span class="fl-not-eligible" title="${this._tr("fl_not_eligible", "Not eligible for Feeling Lucky")}">—</span></td>`
+      : "";
+
     return `
       <tr class="update-row${isInstalling ? " installing" : ""}${isNotInstallable ? " not-installable-row" : ""}">
+        ${flCell}
         <td class="name-cell">
           ${typeBadge}<span class="title">${this._escHtml(u.title)}</span>${notInstallableChip}
         </td>
@@ -473,7 +639,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   }
 
   _renderGrouped() {
-    const typeOrder = ["core", "haos", "addon", "hacs", "device", "other"];
+    const typeOrder = ["supervisor", "core", "haos", "addon", "hacs", "device", "other"];
     const orderedTypes = this._sortDir === "asc" ? typeOrder : [...typeOrder].reverse();
 
     const groups = {};
@@ -500,6 +666,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
           <table class="update-table">
             <thead>
               <tr>
+                ${this._flActive ? `<th class="fl-th"></th>` : ""}
                 <th>${this._tr("col_name", "Name")}</th>
                 <th>${this._tr("col_version", "Version")}</th>
                 <th>${this._tr("col_release_date", "Release date")}</th>
@@ -507,7 +674,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
               </tr>
             </thead>
             <tbody>
-              ${groups[type].map((u) => this._renderUpdateRow(u, false)).join("")}
+              ${groups[type].map((u) => this._renderUpdateRow(u, false, this._flActive)).join("")}
             </tbody>
           </table>
         </div>`;
@@ -530,6 +697,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         <table class="update-table">
           <thead>
             <tr>
+              ${this._flActive ? `<th class="fl-th"></th>` : ""}
               <th>${this._tr("col_name", "Name")}</th>
               <th>${this._tr("col_version", "Version")}</th>
               <th>${this._tr("col_release_date", "Release date")}</th>
@@ -537,7 +705,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
             </tr>
           </thead>
           <tbody>
-            ${sorted.map((u) => this._renderUpdateRow(u, true)).join("")}
+            ${sorted.map((u) => this._renderUpdateRow(u, true, this._flActive)).join("")}
           </tbody>
         </table>
       </div>`;
@@ -577,7 +745,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       ? this._installed.filter(u => u.title.toLowerCase().includes(needle))
       : this._installed;
 
-    const typeOrder = { core: 0, haos: 1, addon: 2, hacs: 3, device: 4, other: 5 };
+    const typeOrder = { supervisor: 0, core: 1, haos: 2, addon: 3, hacs: 4, device: 5, other: 6 };
     const sorted = [...filtered].sort((a, b) => {
       const dir = this._installedSortDir === "asc" ? 1 : -1;
       switch (this._installedSortBy) {
@@ -772,14 +940,23 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     }
 
     if (this._confirm.type === "restart") {
+      const title = this._hostRebootRequired
+        ? this._tr("confirm_host_reboot_title", "Confirm host reboot")
+        : this._tr("confirm_restart_title", "Confirm restart");
+      const body = this._hostRebootRequired
+        ? this._tr("confirm_host_reboot_body", "Are you sure you want to reboot the host? This will cause a brief outage while the whole system restarts.")
+        : this._tr("confirm_restart_body", "Are you sure you want to restart Home Assistant? This will cause a brief outage.");
+      const btnLabel = this._hostRebootRequired
+        ? this._tr("host_reboot_btn", "Reboot Host")
+        : this._tr("btn_restart", "Restart");
       return `
         <div class="confirm-overlay">
           <div class="confirm-dialog">
-            <p class="confirm-title">${this._tr("confirm_restart_title", "Confirm restart")}</p>
-            <p class="confirm-body">${this._tr("confirm_restart_body", "Are you sure you want to restart Home Assistant? This will cause a brief outage.")}</p>
+            <p class="confirm-title">${title}</p>
+            <p class="confirm-body">${body}</p>
             <div class="confirm-actions">
               <button class="btn btn-skip" onclick="this.getRootNode().host._cancelConfirm()">${this._tr("btn_cancel", "Cancel")}</button>
-              <button class="btn btn-restart-confirm" onclick="this.getRootNode().host._doRestart()">${this._tr("btn_restart", "Restart")}</button>
+              <button class="btn btn-restart-confirm" onclick="this.getRootNode().host._doRestart()">${btnLabel}</button>
             </div>
           </div>
         </div>`;
@@ -815,6 +992,107 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       </div>`;
   }
 
+  _renderFeelingLuckyBanner() {
+    const opcon = this._flStatus.opcon;
+    if (opcon === "running") {
+      const queue = this._flStatus.queue || {};
+      const steps = queue.steps || [];
+      const doneCount = steps.filter((s) => s.status === "done").length;
+      const current = steps.find((s) => s.entity_id === queue.current_item);
+      return `
+        <div class="fl-banner fl-banner-running">
+          <span class="fl-banner-icon">🔵</span>
+          <span class="fl-banner-text">
+            ${this._tr("fl_running", "Feeling Lucky is running")} — ${doneCount}/${steps.length}
+            ${current ? `: <strong>${this._escHtml(current.title)}</strong>` : ""}
+          </span>
+        </div>`;
+    }
+    if (opcon === "critical") {
+      const err = this._flStatus.last_error || this._tr("fl_unknown_error", "Unknown error");
+      return `
+        <div class="fl-banner fl-banner-critical">
+          <span class="fl-banner-icon">🔴</span>
+          <span class="fl-banner-text"><strong>Code Red</strong> — ${this._escHtml(err)}</span>
+          <button class="btn fl-reset-btn" onclick="this.getRootNode().host._resetOpcon()">${this._tr("fl_reset_btn", "Reset OPCON")}</button>
+        </div>`;
+    }
+    return "";
+  }
+
+  _renderFeelingLuckyPanel() {
+    if (!this._flActive) return "";
+    const blocked = this._flStatus.opcon === "critical";
+    const blockedTitle = blocked ? this._tr("fl_blocked_tooltip", "OPCON is Code Red — reset it first") : "";
+    const infoBody = this._flInfoCollapsed ? "" : `
+      <div class="fl-info-body">
+        <p class="fl-order">Supervisor → HACS → Add-ons → ${this._tr("fl_device_firmware", "Device firmware")} → OS → Core</p>
+        <p class="fl-info-hint">${this._tr(
+          "fl_info_hint",
+          "Supervisor always goes first — the platform itself requires it. Everything else runs lowest-risk first, saving the restart-heavy OS and Core updates for last, once HACS/add-ons/firmware are already confirmed healthy. Device firmware is excluded by default below — check it in manually if you want it included."
+        )}</p>
+      </div>`;
+    return `
+      <div class="fl-panel">
+        <div class="fl-info-box">
+          <button class="fl-info-toggle" onclick="this.getRootNode().host._toggleFlInfo()">
+            ⓘ ${this._tr("fl_info_title", "Why this order?")} <span class="fl-info-arrow">${this._flInfoCollapsed ? "▸" : "▾"}</span>
+          </button>
+          ${infoBody}
+        </div>
+        <div class="fl-commit-row">
+          <button class="btn fl-btn-day" ${blocked ? "disabled" : ""} title="${blockedTitle}" onclick="this.getRootNode().host._requestFeelingLucky(true)">
+            ${this._tr("fl_btn_day", "Make my day – Install all selected with a Full backup")}
+          </button>
+          <button class="btn fl-btn-crash" ${blocked ? "disabled" : ""} title="${blockedTitle}" onclick="this.getRootNode().host._requestFeelingLucky(false)">
+            ${this._tr("fl_btn_crash", "Make my crash — Install all selected, but No backup (Danger mode)")}
+          </button>
+        </div>
+      </div>`;
+  }
+
+  _renderFlConfirmModal() {
+    if (!this._flConfirm) return "";
+    const { backup } = this._flConfirm;
+    const steps = this._flResolvedSteps();
+
+    let orderHtml = "";
+    let lastPhase = null;
+    for (const s of steps) {
+      if (s.type !== lastPhase) {
+        if (lastPhase !== null) orderHtml += `</ul></div>`;
+        orderHtml += `<div class="fl-confirm-group"><div class="fl-confirm-phase">${this._typeLabel(s.type)}</div><ul>`;
+        lastPhase = s.type;
+      }
+      orderHtml += `<li>${this._escHtml(s.title)}</li>`;
+    }
+    if (lastPhase !== null) orderHtml += `</ul></div>`;
+    if (!orderHtml) orderHtml = `<p>${this._tr("fl_confirm_none", "Nothing eligible is selected.")}</p>`;
+
+    const canConfirm = backup || this._flDangerAck;
+    const danger = !backup ? `
+      <label class="fl-danger-ack">
+        <input type="checkbox" ${this._flDangerAck ? "checked" : ""} onchange="this.getRootNode().host._toggleFlDangerAck()">
+        ${this._tr("fl_danger_ack", "I understand no backup is taken before this run.")}
+      </label>` : "";
+
+    return `
+      <div class="confirm-overlay">
+        <div class="confirm-dialog fl-confirm-dialog">
+          <p class="confirm-title">${backup ? this._tr("fl_confirm_title_day", "Make my day") : this._tr("fl_confirm_title_crash", "Make my crash")}</p>
+          <p class="confirm-body">${this._tr("fl_confirm_body", "This will run, in this order:")}</p>
+          <div class="fl-confirm-steps">${orderHtml}</div>
+          ${danger}
+          <div class="confirm-actions">
+            <button class="btn btn-skip" onclick="this.getRootNode().host._cancelFlConfirm()">${this._tr("btn_cancel", "Cancel")}</button>
+            <button class="btn ${backup ? "fl-btn-day" : "fl-btn-crash"}" ${canConfirm ? "" : "disabled"} onclick="this.getRootNode().host._doFeelingLucky()">
+              ${backup ? this._tr("fl_btn_day_confirm", "Make my day") : this._tr("fl_btn_crash_confirm", "Make my crash")}
+            </button>
+          </div>
+        </div>
+      </div>`;
+  }
+
   _escHtml(str) {
     return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
@@ -842,6 +1120,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         :host { display: block; padding: 16px; font-family: var(--paper-font-body1_-_font-family, sans-serif); }
         .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
         .header h1 { margin: 0; font-size: 1.5rem; font-weight: 500; color: var(--primary-text-color); }
+        .dev-build-tag { display: inline-block; margin-left: 10px; font-size: 0.65rem; font-weight: 600; font-family: monospace; color: var(--warning-color, #ff9800); border: 1px solid var(--warning-color, #ff9800); border-radius: 4px; padding: 2px 6px; vertical-align: middle; }
         .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
         .tab-bar { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 2px solid var(--divider-color, #e0e0e0); }
         .tab-btn { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: 8px 18px; cursor: pointer; font-size: 0.875rem; color: var(--secondary-text-color); white-space: nowrap; transition: color 0.15s; }
@@ -933,13 +1212,51 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         .confirm-title { margin: 0 0 12px; font-size: 1.1rem; font-weight: 500; color: var(--primary-text-color); }
         .confirm-body { margin: 0 0 16px; color: var(--secondary-text-color); line-height: 1.5; }
         .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+        .fl-toggle-btn { background: none; border: 1px solid var(--divider-color, #e0e0e0); color: var(--secondary-text-color); border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 0.875rem; }
+        .fl-toggle-btn:hover { background: var(--secondary-background-color, #f5f5f5); }
+        .fl-toggle-btn.active { border-color: var(--primary-color, #03a9f4); color: var(--primary-color, #03a9f4); background: rgba(3,169,244,0.08); font-weight: 600; }
+        .fl-banner { display: flex; align-items: center; gap: 12px; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; color: white; }
+        .fl-banner-running { background: #0288d1; }
+        .fl-banner-critical { background: #c62828; }
+        .fl-banner-icon { font-size: 1.1rem; flex-shrink: 0; }
+        .fl-banner-text { flex: 1; font-size: 0.9rem; line-height: 1.4; }
+        .fl-reset-btn { background: white; color: #c62828; border: none; font-weight: 600; flex-shrink: 0; }
+        .fl-reset-btn:hover { background: rgba(255,255,255,0.85); }
+        .fl-panel { border: 1px solid var(--divider-color, #e0e0e0); border-radius: 8px; padding: 16px; margin-bottom: 20px; background: var(--card-background-color, white); }
+        .fl-info-box { margin-bottom: 14px; }
+        .fl-info-toggle { background: none; border: none; color: var(--secondary-text-color); cursor: pointer; font-size: 0.85rem; padding: 0; display: flex; align-items: center; gap: 6px; }
+        .fl-info-toggle:hover { color: var(--primary-text-color); }
+        .fl-info-arrow { font-size: 0.7rem; }
+        .fl-info-body { margin-top: 8px; padding-left: 4px; }
+        .fl-order { font-weight: 600; color: var(--primary-text-color); margin: 4px 0; font-size: 0.9rem; }
+        .fl-info-hint { font-size: 0.8rem; color: var(--secondary-text-color); line-height: 1.5; margin: 4px 0 0; }
+        .fl-commit-row { display: flex; gap: 10px; flex-wrap: wrap; }
+        .fl-btn-day { background: var(--primary-color, #03a9f4); color: white; padding: 10px 18px; font-size: 0.9rem; font-weight: 600; flex: 1; min-width: 220px; }
+        .fl-btn-day:hover:not(:disabled) { filter: brightness(1.1); }
+        .fl-btn-crash { background: none; border: 1px solid #c62828; color: #c62828; padding: 8px 14px; font-size: 0.8rem; }
+        .fl-btn-crash:hover:not(:disabled) { background: rgba(198,40,40,0.08); }
+        .fl-checkbox-cell { width: 32px; text-align: center; }
+        .fl-not-eligible { color: var(--secondary-text-color); }
+        .fl-th { width: 32px; }
+        .fl-confirm-dialog { max-width: 480px; }
+        .fl-confirm-steps { max-height: 240px; overflow-y: auto; border: 1px solid var(--divider-color, #e0e0e0); border-radius: 6px; padding: 8px 12px; margin-bottom: 16px; }
+        .fl-confirm-group { margin-bottom: 8px; }
+        .fl-confirm-group:last-child { margin-bottom: 0; }
+        .fl-confirm-phase { font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.4px; color: var(--secondary-text-color); }
+        .fl-confirm-steps ul { margin: 2px 0 0; padding-left: 20px; }
+        .fl-danger-ack { display: flex; align-items: flex-start; gap: 8px; font-size: 0.85rem; color: var(--secondary-text-color); margin-bottom: 16px; line-height: 1.4; cursor: pointer; }
+        @media (max-width: 640px) {
+          .fl-commit-row { flex-direction: column; }
+          .fl-btn-day, .fl-btn-crash { min-width: 0; }
+        }
       </style>
       <div class="header">
-        <h1>${this._tr("panel_title", "Update Manager")}</h1>
+        <h1>${this._tr("panel_title", "Update Manager")}${this._config.dev_build ? `<span class="dev-build-tag" title="Dev build marker — confirms a robocopy sync + restart actually loaded this code">${this._escHtml(this._config.dev_build)}</span>` : ""}</h1>
         <div class="header-actions">
           ${isPending ? this._renderSortButtons() : ""}
           <button class="ha-update-btn" onclick="this.getRootNode().host._navigateToHaUpdates()">${this._tr("ha_updates_btn", "HA Updates ↗")}</button>
           ${isPending ? `<button class="toggle-skipped-btn${this._showSkipped ? " active" : ""}" onclick="this.getRootNode().host._toggleSkipped()">${this._showSkipped ? this._tr("hide_skipped_btn", "Hide skipped") : this._tr("show_skipped_btn", "Show skipped")}</button>` : ""}
+          ${isPending && this._config.feeling_lucky_enabled ? `<button class="fl-toggle-btn${this._flActive ? " active" : ""}" onclick="this.getRootNode().host._toggleFeelingLucky()">${this._flActive ? this._tr("fl_hide", "Hide Feeling Lucky") : this._tr("fl_show", "🍀 Feeling Lucky")}</button>` : ""}
           <button class="refresh-btn" onclick="this.getRootNode().host._refresh()">${this._tr("refresh_btn", "Refresh list")}</button>
         </div>
       </div>
@@ -949,6 +1266,8 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         <button class="tab-btn${this._view === "history" ? " active" : ""}" onclick="this.getRootNode().host._setView('history')">${this._tr("tab_history", "Latest installed")}</button>
       </div>
       ${isPending ? this._renderRestartBanner() : ""}
+      ${isPending ? this._renderFeelingLuckyBanner() : ""}
+      ${isPending ? this._renderFeelingLuckyPanel() : ""}
       ${isPending
         ? (this._loading
             ? `<div class="loading">${this._tr("loading", "Fetching updates…")}</div>`
@@ -960,6 +1279,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
       ${this._view === "installed" ? this._renderInstalled() : ""}
       ${this._view === "history" ? this._renderHistory() : ""}
       ${this._renderConfirmModal()}
+      ${this._renderFlConfirmModal()}
     `;
   }
 }

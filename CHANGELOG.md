@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.5.0] - 2026-10-30
+### Added
+- **🍀 Feeling Lucky mode** — pick your pending updates and let AUM install them all, unattended, in a safe hardcoded order: Supervisor → HACS → Add-ons → Device firmware → HA OS → Core. Supervisor-first is a hard platform requirement; everything else runs lowest-risk/most-reversible first, saving the restart-heavy OS and Core updates for last. **Off by default** — enable it under **Settings → Devices & Services → Advanced Update Manager → Configure → "Enable Feeling Lucky mode (Allow batch/multi-updates)"**.
+- **OPCON** (`sensor.opcon`) — a stable `ok` / `running` / `critical` status for the whole system, safe to build automations on.
+- **Feeling Lucky Queue** sensor — the live, detailed view of the current/last run (per-step status, current item, start time).
+- **Code Red / "Blue Screen" failure handling** — any error freezes the run immediately, leaves the queue exactly as it was for troubleshooting, and blocks new runs until reset. Raises a Repairs issue (Settings → System → Repairs) automatically, cleared only by **Reset OPCON**.
+- `button.reset_opcon` entity and `advanced_update_manager.reset_opcon` action — the only way back to green after a Code Red.
+- `advanced_update_manager.start_feeling_lucky` action — start a run from an automation, with a `backup` field for "Make my day" (full backup first) vs "Make my crash" (no backup, danger mode).
+- Proper `translations/` files (English + Swedish) for config/options text and the new Repairs issue — previously only `strings.json` existed, which custom integrations don't actually read at runtime.
+
 ## [1.3.0] - 2026-06-13
 ### Added
 - Release notes link (↗) for **HA APPS** (Supervisor add-ons) — AUM now queries the Supervisor API to resolve the add-on's GitHub repository and constructs a direct link to the release tag. Previously only Core and HACS updates had clickable release links.
