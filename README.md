@@ -166,6 +166,8 @@ Advanced Update Manager creates a set of HA sensor entities grouped under a sing
 | **Avg Days Release to Install**<br>`sensor.advanced_update_manager_avg_days_release_to_install` | `4.2 days` | Average time between a release being published and you installing it — your personal update hygiene score. |
 | **Longest Gap Without Update**<br>`sensor.advanced_update_manager_longest_gap_without_update` | `34 days` | All-time record of the longest gap between consecutive installs — your personal best on the "accident counter". |
 | **Most Updated Integration**<br>`sensor.advanced_update_manager_most_updated_integration` | `ESPHome` | The integration you have updated most often. Attributes include the install count and entity ID. |
+| **OPCON (Update Status)**<br>`sensor.advanced_update_manager_opcon` | `ok` | Status for [🍀 Feeling Lucky mode](#-feeling-lucky-mode) — `ok` / `running` / `critical` (Code Red). Attributes: `last_error`, `since`, `backup_taken`. |
+| **Feeling Lucky Queue**<br>`sensor.advanced_update_manager_feeling_lucky_queue` | `0` | The live detail view behind a [Feeling Lucky](#-feeling-lucky-mode) run — state is the count of steps not yet done. Attributes: `steps` (per-step status), `current_item`, `started_at`. |
 
 ## Automation & Dashboard Examples
 
