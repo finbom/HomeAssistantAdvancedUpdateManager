@@ -117,7 +117,6 @@ async def ws_get_config(hass: HomeAssistant, connection, msg: dict) -> None:
         "history_keep_days": history_keep_days,
         "feeling_lucky_enabled": feeling_lucky_enabled,
         "storage_size_bytes": storage_size_bytes,
-        "dev_build": DEV_BUILD_MARKER,
     })
 
 

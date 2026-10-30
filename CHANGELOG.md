@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.5.1] - 2026-10-30
+### Fixed
+- `get_config` websocket command crashed with a `NameError` on a leftover reference to a removed dev-only constant, introduced while cleaning up before the 1.5.0 release. This made the frontend silently fall back to default config on every load — notably, the **"Enable Feeling Lucky mode"** toggle always appeared off in the panel even when turned on in the integration's options.
+
 ## [1.5.0] - 2026-10-30
 ### Added
 - **🍀 Feeling Lucky mode** — pick your pending updates and let AUM install them all, unattended, in a safe hardcoded order: Supervisor → HACS → Add-ons → Device firmware → HA OS → Core. Supervisor-first is a hard platform requirement; everything else runs lowest-risk/most-reversible first, saving the restart-heavy OS and Core updates for last. **Off by default** — enable it under **Settings → Devices & Services → Advanced Update Manager → Configure → "Enable Feeling Lucky mode (Allow batch/multi-updates)"**.

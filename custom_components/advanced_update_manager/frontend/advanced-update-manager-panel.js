@@ -1120,7 +1120,6 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         :host { display: block; padding: 16px; font-family: var(--paper-font-body1_-_font-family, sans-serif); }
         .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
         .header h1 { margin: 0; font-size: 1.5rem; font-weight: 500; color: var(--primary-text-color); }
-        .dev-build-tag { display: inline-block; margin-left: 10px; font-size: 0.65rem; font-weight: 600; font-family: monospace; color: var(--warning-color, #ff9800); border: 1px solid var(--warning-color, #ff9800); border-radius: 4px; padding: 2px 6px; vertical-align: middle; }
         .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
         .tab-bar { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 2px solid var(--divider-color, #e0e0e0); }
         .tab-btn { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: 8px 18px; cursor: pointer; font-size: 0.875rem; color: var(--secondary-text-color); white-space: nowrap; transition: color 0.15s; }
@@ -1251,7 +1250,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
         }
       </style>
       <div class="header">
-        <h1>${this._tr("panel_title", "Update Manager")}${this._config.dev_build ? `<span class="dev-build-tag" title="Dev build marker — confirms a robocopy sync + restart actually loaded this code">${this._escHtml(this._config.dev_build)}</span>` : ""}</h1>
+        <h1>${this._tr("panel_title", "Update Manager")}</h1>
         <div class="header-actions">
           ${isPending ? this._renderSortButtons() : ""}
           <button class="ha-update-btn" onclick="this.getRootNode().host._navigateToHaUpdates()">${this._tr("ha_updates_btn", "HA Updates ↗")}</button>
