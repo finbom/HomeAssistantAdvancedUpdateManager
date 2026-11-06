@@ -12,7 +12,8 @@ from homeassistant.components.frontend import async_remove_panel
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.panel_custom import async_register_panel
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import CoreState, Event, HomeAssistant, ServiceCall
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import CoreState, Event, HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
@@ -28,15 +29,19 @@ from .const import (
     PANEL_JS,
     PANEL_TITLE,
     PANEL_URL_PATH,
+    SERVICE_AUTOPILOT_RUN_NOW,
+    SERVICE_AUTOPILOT_SKIP_NEXT,
     SERVICE_RESET_OPCON,
     SERVICE_START_FEELING_LUCKY,
 )
+from .autopilot import AutopilotManager
 from .coordinator import UpdateManagerCoordinator
 from .feeling_lucky import FeelingLuckyRunner
 from .storage import UpdateDateStorage
 from . import websocket_api
 
 _LOGGER = logging.getLogger(__name__)
+PLATFORMS = ["sensor", "button", "switch", "binary_sensor"]
 _VERSION = json.loads((Path(__file__).parent / "manifest.json").read_text())["version"]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -65,6 +70,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     runner = FeelingLuckyRunner(hass, storage, enabled=feeling_lucky_enabled)
     hass.data[DOMAIN]["feeling_lucky_runner"] = runner
 
+    # Autopilot must hook into the runner BEFORE a run is resumed below, so a
+    # run interrupted by a Core update still reports back when it finishes.
+    autopilot = AutopilotManager(hass, storage, runner, coordinator)
+    await autopilot.async_setup()
+    hass.data[DOMAIN]["autopilot"] = autopilot
+    entry.async_on_unload(autopilot.async_unload)
+
+    @callback
+    def _on_stop(_event: Event) -> None:
+        live_runner = hass.data.get(DOMAIN, {}).get("feeling_lucky_runner")
+        if live_runner:
+            live_runner.async_cancel_for_shutdown()
+
+    entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop))
+
     if not hass.data[DOMAIN].get("services_registered"):
         _async_register_feeling_lucky_services(hass)
         hass.data[DOMAIN]["services_registered"] = True
@@ -77,11 +97,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # CoreState.starting, which would fire this too early on a normal
         # boot — before other integrations' entities exist to poll.)
         hass.async_create_task(runner.async_resume_if_needed())
+        hass.async_create_task(autopilot.async_on_started())
     else:
         async def _on_started(_event: Event) -> None:
             live_runner = hass.data.get(DOMAIN, {}).get("feeling_lucky_runner")
             if live_runner:
                 await live_runner.async_resume_if_needed()
+            live_autopilot = hass.data.get(DOMAIN, {}).get("autopilot")
+            if live_autopilot:
+                await live_autopilot.async_on_started()
 
         entry.async_on_unload(
             hass.bus.async_listen_once("homeassistant_started", _on_started)
@@ -151,7 +175,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     websocket_api.async_setup(hass)
     await coordinator.async_refresh()
 
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "button"])
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Seed history from recorder (one-time, runs in background)
     if not storage.is_history_seeded():
@@ -239,11 +263,27 @@ def _async_register_feeling_lucky_services(hass: HomeAssistant) -> None:
     )
     hass.services.async_register(DOMAIN, SERVICE_RESET_OPCON, _async_reset_opcon)
 
+    async def _async_autopilot_run_now(call: ServiceCall) -> None:
+        autopilot: AutopilotManager = hass.data[DOMAIN]["autopilot"]
+        hass.async_create_task(autopilot.async_run(trigger="manual"))
+
+    async def _async_autopilot_skip_next(call: ServiceCall) -> None:
+        autopilot: AutopilotManager = hass.data[DOMAIN]["autopilot"]
+        await autopilot.async_set_skip_next(call.data["skip"])
+
+    hass.services.async_register(DOMAIN, SERVICE_AUTOPILOT_RUN_NOW, _async_autopilot_run_now)
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_AUTOPILOT_SKIP_NEXT,
+        _async_autopilot_skip_next,
+        schema=vol.Schema({vol.Optional("skip", default=True): cv.boolean}),
+    )
+
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     async_remove_panel(hass, PANEL_URL_PATH)
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor", "button"])
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         static_flag = hass.data[DOMAIN].get("static_paths_registered")
         services_flag = hass.data[DOMAIN].get("services_registered")

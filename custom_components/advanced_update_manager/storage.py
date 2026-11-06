@@ -1,6 +1,7 @@
 """Persistent storage for release dates and install history."""
 from __future__ import annotations
 
+import copy
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -8,7 +9,28 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
 
-from .const import FL_OPCON_OK, SIGNAL_FEELING_LUCKY_UPDATED, STORAGE_KEY, STORAGE_VERSION
+from .const import (
+    AP_DEFAULT_CONFIG,
+    AP_EVENTS_DEFAULT,
+    AP_STATUS_NEVER,
+    FL_OPCON_OK,
+    SIGNAL_AUTOPILOT_UPDATED,
+    SIGNAL_FEELING_LUCKY_UPDATED,
+    STORAGE_KEY,
+    STORAGE_VERSION,
+)
+
+_AP_STATE_DEFAULT = {
+    "status": AP_STATUS_NEVER,
+    "last_run": None,          # summary dict of the latest run (see autopilot.py)
+    "current_run": None,       # set while a run is in flight (survives restarts)
+    "success_streak": 0,
+    "last_backup": None,       # {"at": iso, "name": str}
+    "skip_next": None,         # iso datetime of the scheduled run to skip
+    "first_seen": {},          # "entity_id|version" -> "YYYY-MM-DD"
+    "notified_new": [],        # new-component ids already notified about
+    "restart_notice": False,   # Autopilot restarted HA; announce when back
+}
 
 _FL_DEFAULT = {
     "opcon": FL_OPCON_OK,
@@ -32,6 +54,8 @@ class UpdateDateStorage:
         self._install_history: list[dict] = []
         self._history_seeded: bool = False
         self._feeling_lucky: dict = dict(_FL_DEFAULT)
+        self._ap_config: dict = copy.deepcopy(AP_DEFAULT_CONFIG)
+        self._ap_state: dict = copy.deepcopy(_AP_STATE_DEFAULT)
 
     async def async_load(self) -> None:
         data = await self._store.async_load() or {}
@@ -40,6 +64,10 @@ class UpdateDateStorage:
         self._install_history = data.get("install_history", [])
         self._history_seeded = data.get("history_seeded", False)
         self._feeling_lucky = {**_FL_DEFAULT, **data.get("feeling_lucky", {})}
+        ap_cfg = {**copy.deepcopy(AP_DEFAULT_CONFIG), **data.get("autopilot_config", {})}
+        ap_cfg["notify_events"] = {**AP_EVENTS_DEFAULT, **ap_cfg.get("notify_events", {})}
+        self._ap_config = ap_cfg
+        self._ap_state = {**copy.deepcopy(_AP_STATE_DEFAULT), **data.get("autopilot_state", {})}
 
     async def _async_save(self) -> None:
         await self._store.async_save({
@@ -48,7 +76,27 @@ class UpdateDateStorage:
             "install_history": self._install_history,
             "history_seeded": self._history_seeded,
             "feeling_lucky": self._feeling_lucky,
+            "autopilot_config": self._ap_config,
+            "autopilot_state": self._ap_state,
         })
+
+    # --- Autopilot: config (user settings) + state (run bookkeeping) ---
+
+    def get_autopilot_config(self) -> dict:
+        return copy.deepcopy(self._ap_config)
+
+    async def async_save_autopilot_config(self, config: dict) -> None:
+        self._ap_config = copy.deepcopy(config)
+        await self._async_save()
+        async_dispatcher_send(self._hass, SIGNAL_AUTOPILOT_UPDATED)
+
+    def get_autopilot_state(self) -> dict:
+        return copy.deepcopy(self._ap_state)
+
+    async def async_save_autopilot_state(self, state: dict) -> None:
+        self._ap_state = copy.deepcopy(state)
+        await self._async_save()
+        async_dispatcher_send(self._hass, SIGNAL_AUTOPILOT_UPDATED)
 
     # --- Feeling Lucky: OPCON + queue (frozen together, reset together) ---
 

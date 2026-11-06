@@ -12,9 +12,12 @@ from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import (
+    AP_STATUS_NEVER,
     DOMAIN,
+    SIGNAL_AUTOPILOT_UPDATED,
     FL_OPCON_OK,
     FL_STEP_DONE,
     SIGNAL_FEELING_LUCKY_UPDATED,
@@ -80,6 +83,14 @@ async def async_setup_entry(
         AUMMostUpdatedSensor(coordinator, entry.entry_id),
         AUMOpconSensor(storage, entry.entry_id),
         AUMFeelingLuckyQueueSensor(storage, entry.entry_id),
+        AutopilotStatusSensor(hass, entry.entry_id),
+        AutopilotNextRunSensor(hass, entry.entry_id),
+        AutopilotLastRunSensor(hass, entry.entry_id),
+        AutopilotReadySensor(hass, entry.entry_id),
+        AutopilotWaitingSensor(hass, entry.entry_id),
+        AutopilotNewComponentsSensor(hass, entry.entry_id),
+        AutopilotStreakSensor(hass, entry.entry_id),
+        AutopilotLastBackupSensor(hass, entry.entry_id),
     ])
 
 
@@ -577,3 +588,226 @@ class AUMFeelingLuckyQueueSensor(_AUMFeelingLuckySensor):
             "current_item": queue.get("current_item"),
             "started_at": queue.get("started_at"),
         }
+
+
+# ── Autopilot ─────────────────────────────────────────────────────────────
+# Push-updated from the Autopilot manager (dispatcher) and also refreshed on
+# every coordinator cycle, since "ready / waiting" changes as updates appear
+# and age past the minimum.
+
+class _AutopilotSensor(SensorEntity):
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    def __init__(self, hass: HomeAssistant, entry_id: str, key: str) -> None:
+        self._attr_unique_id = f"{entry_id}_{key}"
+        self._entry_id = entry_id
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name="Advanced Update Manager",
+            manufacturer="Magnus Finbom",
+            entry_type=DeviceEntryType.SERVICE,
+        )
+
+    @property
+    def _ap(self):
+        return self.hass.data[DOMAIN]["autopilot"]
+
+    @property
+    def _state(self) -> dict:
+        return self.hass.data[DOMAIN]["storage"].get_autopilot_state()
+
+    async def async_added_to_hass(self) -> None:
+        for signal in (SIGNAL_AUTOPILOT_UPDATED, SIGNAL_FEELING_LUCKY_UPDATED):
+            self.async_on_remove(async_dispatcher_connect(self.hass, signal, self._handle_update))
+        coordinator = self.hass.data[DOMAIN]["coordinator"]
+        self.async_on_remove(coordinator.async_add_listener(self._handle_update))
+
+    @callback
+    def _handle_update(self) -> None:
+        self.async_write_ha_state()
+
+
+class AutopilotStatusSensor(_AutopilotSensor):
+    """Stable, automation-safe outcome of the latest run."""
+
+    _attr_name = "Autopilot Status"
+    _attr_icon = "mdi:airplane"
+
+    def __init__(self, hass, entry_id) -> None:
+        super().__init__(hass, entry_id, "autopilot_status")
+
+    @property
+    def native_value(self) -> str:
+        return self._state.get("status") or AP_STATUS_NEVER
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        state = self._state
+        last = state.get("last_run") or {}
+        return {
+            "enabled": bool(self._ap.config.get("enabled")),
+            "running": self._ap.is_running,
+            "current_run": state.get("current_run"),
+            "last_run_trigger": last.get("trigger"),
+            "installed": [i.get("title") for i in last.get("installed", [])],
+            "failed": last.get("failed", []),
+            "not_started": last.get("not_started", []),
+            "error": last.get("error"),
+            "restarted": last.get("restarted", False),
+            "core_restarted": last.get("core_restarted", False),
+            "skip_next": state.get("skip_next"),
+        }
+
+
+class AutopilotNextRunSensor(_AutopilotSensor):
+    _attr_name = "Autopilot Next Run"
+    _attr_icon = "mdi:calendar-clock"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, hass, entry_id) -> None:
+        super().__init__(hass, entry_id, "autopilot_next_run")
+
+    @property
+    def native_value(self):
+        return self._ap.next_run
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        cfg = self._ap.config
+        return {
+            "skip_next": bool(self._state.get("skip_next")),
+            "core": cfg.get("core"),
+            "apps": cfg.get("addon_mode"),
+            "hacs": cfg.get("hacs_mode"),
+            "include_major": cfg.get("include_major"),
+            "min_age_days": cfg.get("min_age_days"),
+        }
+
+
+class AutopilotLastRunSensor(_AutopilotSensor):
+    _attr_name = "Autopilot Last Run"
+    _attr_icon = "mdi:history"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, hass, entry_id) -> None:
+        super().__init__(hass, entry_id, "autopilot_last_run")
+
+    @property
+    def native_value(self):
+        last = self._state.get("last_run") or {}
+        return dt_util.parse_datetime(last["finished_at"]) if last.get("finished_at") else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        last = self._state.get("last_run") or {}
+        started = dt_util.parse_datetime(last["started_at"]) if last.get("started_at") else None
+        finished = dt_util.parse_datetime(last["finished_at"]) if last.get("finished_at") else None
+        return {
+            "status": last.get("status"),
+            "duration_minutes": round((finished - started).total_seconds() / 60, 1) if started and finished else None,
+            "backup": last.get("backup"),
+            "installed": [i.get("title") for i in last.get("installed", [])],
+            "failed": last.get("failed", []),
+            "waiting": last.get("waiting"),
+            "skipped_major": last.get("major"),
+        }
+
+
+def _brief(items: list[dict]) -> list[dict]:
+    keys = ("entity_id", "title", "type", "from_version", "to_version", "reason", "eligible_from")
+    return [{k: i.get(k) for k in keys} for i in items]
+
+
+class AutopilotReadySensor(_AutopilotSensor):
+    """How many updates the next run would install right now, and for the
+    rest the reason they are left out."""
+
+    _attr_name = "Autopilot Ready"
+    _attr_icon = "mdi:airplane-check"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, hass, entry_id) -> None:
+        super().__init__(hass, entry_id, "autopilot_ready")
+
+    @property
+    def native_value(self) -> int:
+        return len(self._ap.evaluate()["ready"])
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        ev = self._ap.evaluate()
+        return {"ready": _brief(ev["ready"]), "not_included": _brief(ev["excluded"])}
+
+
+class AutopilotWaitingSensor(_AutopilotSensor):
+    _attr_name = "Autopilot Waiting"
+    _attr_icon = "mdi:timer-sand"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, hass, entry_id) -> None:
+        super().__init__(hass, entry_id, "autopilot_waiting")
+
+    @property
+    def native_value(self) -> int:
+        return len(self._ap.evaluate()["waiting"])
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"waiting": _brief(self._ap.evaluate()["waiting"])}
+
+
+class AutopilotNewComponentsSensor(_AutopilotSensor):
+    _attr_name = "Autopilot New Components Not Scheduled"
+    _attr_icon = "mdi:new-box"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, hass, entry_id) -> None:
+        super().__init__(hass, entry_id, "autopilot_new_components")
+
+    @property
+    def native_value(self) -> int:
+        return len(self._ap.new_unscheduled())
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {
+            "components": [
+                {"title": c["title"], "type": c["type"], "entity_id": c["entity_id"]}
+                for c in self._ap.new_unscheduled()
+            ]
+        }
+
+
+class AutopilotStreakSensor(_AutopilotSensor):
+    _attr_name = "Autopilot Successful Runs In A Row"
+    _attr_icon = "mdi:trophy-outline"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, hass, entry_id) -> None:
+        super().__init__(hass, entry_id, "autopilot_success_streak")
+
+    @property
+    def native_value(self) -> int:
+        return int(self._state.get("success_streak", 0))
+
+
+class AutopilotLastBackupSensor(_AutopilotSensor):
+    _attr_name = "Autopilot Last Backup"
+    _attr_icon = "mdi:backup-restore"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, hass, entry_id) -> None:
+        super().__init__(hass, entry_id, "autopilot_last_backup")
+
+    @property
+    def native_value(self):
+        backup = self._state.get("last_backup") or {}
+        return dt_util.parse_datetime(backup["at"]) if backup.get("at") else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"name": (self._state.get("last_backup") or {}).get("name")}

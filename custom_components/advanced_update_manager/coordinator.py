@@ -10,6 +10,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
+    HACS_PLATFORMS,
     CORE_ENTITY_ID,
     DOMAIN,
     HAOS_ENTITY_ID,
@@ -295,7 +296,7 @@ class UpdateManagerCoordinator(DataUpdateCoordinator):
             return UPDATE_TYPE_SUPERVISOR
 
         if entry:
-            if entry.platform == "hacs":
+            if entry.platform in HACS_PLATFORMS:
                 return UPDATE_TYPE_HACS
             if entry.platform == "hassio":
                 return UPDATE_TYPE_ADDON

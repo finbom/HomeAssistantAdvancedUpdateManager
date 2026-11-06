@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.6.0] - 2026-11-06
+### Added
+- **✈️ Autopilot** — scheduled, unattended updates of Core, apps (add-ons) and HACS, in its own panel tab. Choose the time and weekdays; per type **Off / All / All except… / Only selected**; wait at least N days after release (default 7, 0–360); major versions opt-in (off, not recommended). Every run starts with a **verified full backup** (no backup → nothing installed, "Autopilot disengaged", retried at the next run), installs HACS → apps → Core using the Feeling Lucky engine, survives the Core restart and restarts Home Assistant when HACS integrations need it. **Off by default.**
+- Live **"If Autopilot ran now"** preview — shows, before you save, exactly what would be installed, what is waiting (and until when) and why the rest is left out.
+- Notifications with a **receiver picker** (HA notifications, phones by name, other notify services and notify entities), **Send test notification**, per-event choices, a heads-up with a **"Skip tonight"** button on phones, and the HA instance name in every notification.
+- New entities: Autopilot switch, Autopilot Running binary sensor, Status / Next Run / Last Run / Ready / Waiting / New Components Not Scheduled / Successful Runs In A Row / Last Backup sensors, Run Now and Skip Next Run buttons.
+- New actions `advanced_update_manager.autopilot_run_now` and `advanced_update_manager.autopilot_skip_next`, and the event `advanced_update_manager_autopilot` for your own automations.
+
+### Fixed
+- **Backups were silently skipped on Home Assistant OS.** "Backup + Update" and Feeling Lucky's "Make my day" called `backup.create`, which doesn't exist on Supervisor installs, so updates ran without any backup (Feeling Lucky even reported the backup as taken). Backups now use the service that exists (`backup.create_automatic` on HAOS) and an update only starts once the new backup actually shows up. If the backup fails, nothing is installed.
+- **Home Assistant 2026.11 compatibility:** HACS updates moved to the built-in **Marketplace** integration and were shown as device updates. Both are now recognised as HACS everywhere (panel, sensors, Feeling Lucky, Autopilot).
+- Feeling Lucky could include Advanced Update Manager's own update, because HACS identifies repositories by a numeric id rather than `owner/repo`.
+- "App backup + Install" was offered for Core, OS, Supervisor and firmware updates; it only exists for apps (add-ons).
+- A running Feeling Lucky / Autopilot sequence no longer holds up Home Assistant's shutdown when a Core update restarts it.
+
 ## [1.5.1] - 2026-10-30
 ### Fixed
 - `get_config` websocket command crashed with a `NameError` on a leftover reference to a removed dev-only constant, introduced while cleaning up before the 1.5.0 release. This made the frontend silently fall back to default config on every load — notably, the **"Enable Feeling Lucky mode"** toggle always appeared off in the panel even when turned on in the integration's options.

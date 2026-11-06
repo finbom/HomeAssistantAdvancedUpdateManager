@@ -9,14 +9,15 @@ A HACS custom integration that adds a dedicated **Update Manager** panel to your
 
 ## Features
 
-- **All update types in one view** — Core, HA OS, Add-ons, HACS integrations, Device firmware, and Other
+- **All update types in one view** — Core, HA OS, Add-ons, HACS (including the built-in Marketplace in Home Assistant 2026.11+), Device firmware, and Other
 - **Real release dates** — fetched from GitHub and cached persistently (survives restarts)
 - **Direct links** to release notes for each update
-- **Backup before update** — one-click backup + install
+- **Backup before update** — one-click backup + install, verified: the update only starts once the new backup actually exists
 - **Skip** a specific version without losing the update notification
 - **Real-time sync** — automatically reflects updates installed via the normal HA UI
 - **Sensor entities** — expose update statistics to dashboards, automations, and scripts
-- **🍀 Feeling Lucky mode** *(new, off by default)* — pick your pending updates and let AUM install them all, in a safe hardcoded order, unattended — see below
+- **🍀 Feeling Lucky mode** *(off by default)* — pick your pending updates and let AUM install them all, in a safe hardcoded order, unattended — see below
+- **✈️ Autopilot** *(new, off by default)* — scheduled, unattended updates of Core, apps and HACS: you choose what and when, every run starts with a verified full backup — see below
 
 ## Installation via HACS
 
@@ -145,6 +146,125 @@ action:
 ```
 
 > Entity IDs above assume the default device-scoped naming — check **Developer Tools → States** if yours differ.
+
+## ✈️ Autopilot
+
+**Autopilot** keeps Home Assistant up to date on a schedule — unattended, but never unprotected. You choose *what* may be updated and *when*; every run starts with a verified full backup, installs in a safe order, restarts Home Assistant when needed and tells you what happened.
+
+![Autopilot](https://raw.githubusercontent.com/finbom/HomeAssistantAdvancedUpdateManager/main/Assets/AutoPilot1.png)
+
+> **Off by default — everything is.** A fresh install has Autopilot switched off and every update type set to *Off*. Nothing is ever installed until you have chosen it yourself.
+
+Open the **✈️ Autopilot** tab in the Update Manager panel to set it up.
+
+### What a run does
+
+```
+Scheduled time → "skip tonight"? → filters → verified full backup → HACS → Apps → Core → restart if needed → summary
+```
+
+1. **Filters** decide which pending updates are included (see below).
+2. **A full backup is taken and verified** — Autopilot only continues once the new backup actually exists. If the backup fails, **nothing is installed** ("Autopilot disengaged") and the next scheduled run simply tries again.
+3. Updates are installed **one at a time**, using the same engine as Feeling Lucky: **HACS → Apps (add-ons) → Core**. Core always goes last — it restarts Home Assistant by itself, and the run picks up again after the restart.
+4. If HACS integrations were updated and Core didn't already restart Home Assistant, Autopilot **restarts it for you** (cards and themes don't need a restart, so they don't trigger one).
+5. You get a **summary** — what was installed, from which version to which, and what is still waiting.
+
+### What gets installed
+
+Autopilot handles **Core, Apps (add-ons) and HACS only**. Supervisor, HA OS, device firmware and anything else are never touched.
+
+| Type | Choices |
+|------|---------|
+| **Core** | Off / On |
+| **Apps** and **HACS** (each on its own) | **Off** — nothing of this type · **All** — everything, newly installed ones included automatically · **All except…** — tick the ones Autopilot must never touch · **Only selected** — tick the ones Autopilot may update; newly installed ones are *not* included until you tick them |
+
+With **Only selected**, a newly installed app or HACS repository is easy to forget — so Autopilot shows a banner, raises a notification and counts it in a sensor until you decide.
+
+Advanced Update Manager itself is always updated **last** in the HACS phase.
+
+### Rules
+
+- **Wait at least N days after release** (default **7**, 0–360). Let the rest of the world find the bugs in the `.0` releases first. If an update has no known release date, the age counts from the day AUM first saw it.
+- **Include major version updates** — **off by default, and not recommended.** Major versions often contain breaking changes; install them by hand.
+- Versions you have **skipped** in Home Assistant are never installed.
+
+The **If Autopilot ran now** box shows — live, even before you save — exactly which updates would be installed, which are waiting (with the date they become old enough) and why the rest are left out. It uses the very same rules as a real run.
+
+### When
+
+Pick a **time** (the ▲▼ arrows step hours and 5-minute steps) and the **weekdays**. The schedule switch turns Autopilot on and off — handy while you're on vacation. **Run now** runs immediately with the saved settings, even when the schedule is off. **Skip next run** skips just the next scheduled run.
+
+### Notifications
+
+Choose **receivers** — Home Assistant's own notifications, your phones (shown by device name, from the Companion app), other notify services and notify entities — and press **📨 Send test notification** to make sure they arrive. Then choose **when** to be notified:
+
+| Event | Default |
+|-------|---------|
+| Heads-up N hours before the run — with a **"Skip tonight"** button on phones | Off |
+| Run starts | Off |
+| Backup succeeded | Off |
+| **Backup failed — Autopilot disengaged** | **Always on** |
+| An update failed / run blocked | On |
+| Summary when the run is done | On |
+| Home Assistant is back after a restart | On |
+| No updates to install (confirms Autopilot ran) | Off |
+| New components not in the schedule | On |
+
+Every notification names its sender, so it's clear which installation it came from, e.g. **"Autopilot (Home): 3 update(s) installed"** — *From Home Assistant (Home) · Advanced Update Manager Autopilot*. The instance name is the one under **Settings → System → General**.
+
+> Home Assistant's own notifications are cleared when Home Assistant restarts — after a Core update only the summary is left there. Notifications to a phone are not affected.
+
+Notifications are sent in Home Assistant's system language (English and Swedish included).
+
+### When something goes wrong
+
+- **Backup failed** → nothing is installed, you are notified ("Autopilot disengaged"), and the next scheduled run tries again.
+- **An update failed** → the run freezes immediately and OPCON goes **Code Red**, exactly like Feeling Lucky. Autopilot will not run again until you've looked at it and pressed **Reset OPCON**.
+
+### New entities
+
+| Entity | What it is |
+|--------|-----------|
+| **Autopilot** switch | Turns the schedule on/off. |
+| **Autopilot Running** binary sensor | On for the whole run, backup included — useful as a condition to hold off other automations. |
+| **Autopilot Status** sensor | Outcome of the latest run: `never_run`, `running`, `success`, `failed`, `backup_failed`, `nothing_to_do`, `skipped`, `blocked`. Attributes list what was installed, what failed and any error. |
+| **Autopilot Next Run** sensor | Timestamp of the next scheduled run. |
+| **Autopilot Last Run** sensor | When the latest run finished; attributes include duration, backup and installed updates. |
+| **Autopilot Ready** sensor | How many updates the next run would install right now; attributes list them — and why the others are not included. |
+| **Autopilot Waiting** sensor | Updates waiting for the minimum age, with the date each becomes ready. |
+| **Autopilot New Components Not Scheduled** sensor | Newly installed apps/HACS repositories left out by *Only selected*. |
+| **Autopilot Successful Runs In A Row** sensor | Your streak. |
+| **Autopilot Last Backup** sensor | Time and name of the latest backup Autopilot took. |
+| **Autopilot Run Now** button | Same as the panel button. |
+| **Autopilot Skip Next Run** button | Skips the next scheduled run. |
+
+### New actions
+
+| Action | What it does |
+|--------|-------------|
+| `advanced_update_manager.autopilot_run_now` | Runs Autopilot now with the saved settings. |
+| `advanced_update_manager.autopilot_skip_next` | Skips the next scheduled run. Field `skip` (default `true`) — `false` cancels a pending skip. |
+
+### Your own automations
+
+Every Autopilot step is also fired as the event **`advanced_update_manager_autopilot`**, whatever notifications you have chosen. The field `event` tells what happened (`prewarn`, `start`, `backup_ok`, `backup_failed`, `update_failed`, `summary`, `restarted`, `nothing_to_do`, `new_components`, and when a run ends `success`, `failed`, `skipped`, `blocked`); `title`, `message` and `instance` carry the ready-made texts.
+
+```yaml
+alias: Autopilot to my own receiver
+triggers:
+  - trigger: event
+    event_type: advanced_update_manager_autopilot
+conditions:
+  - condition: template
+    value_template: "{{ trigger.event.data.message is defined }}"
+actions:
+  - action: notify.send_message
+    target:
+      entity_id: notify.my_receiver
+    data:
+      title: "{{ trigger.event.data.title }}"
+      message: "{{ trigger.event.data.message }}"
+```
 
 ## Sensors
 
@@ -286,7 +406,7 @@ content: >
 | Core | Home Assistant Core |
 | HA OS | Home Assistant Operating System |
 | Add-on | Supervisor add-ons |
-| HACS | HACS integrations, cards and themes |
+| HACS | HACS integrations, cards and themes — including the built-in **Marketplace** that replaces HACS in Home Assistant 2026.11+ |
 | Device | Device firmware (ESPHome, Z-Wave, etc.) |
 | Other | Anything else |
 

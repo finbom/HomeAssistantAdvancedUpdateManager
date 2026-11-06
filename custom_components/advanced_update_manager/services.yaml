@@ -28,3 +28,22 @@ reset_opcon:
   description: >-
     The only way to clear a Code Red update-status alert. Resets OPCON to ok
     and clears the frozen queue snapshot together.
+
+autopilot_run_now:
+  name: Autopilot — run now
+  description: >-
+    Run Autopilot immediately with the saved filters (full verified backup
+    first, then Core / apps / HACS in the safe order). Works even when the
+    Autopilot schedule switch is off.
+
+autopilot_skip_next:
+  name: Autopilot — skip next run
+  description: Skip (or un-skip) the next scheduled Autopilot run.
+  fields:
+    skip:
+      name: Skip
+      description: true = skip the next run, false = cancel a pending skip.
+      required: false
+      default: true
+      selector:
+        boolean:

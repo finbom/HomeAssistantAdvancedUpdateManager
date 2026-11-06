@@ -20,12 +20,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .const import (
+    AP_ORIGIN,
     DOMAIN,
     FL_OPCON_CRITICAL,
     FL_OPCON_OK,
@@ -43,6 +45,7 @@ from .const import (
     FL_TIMEOUT_DEFAULT,
     FL_TYPE_TO_PHASE,
 )
+from .backup_helper import async_create_verified_backup
 from .storage import UpdateDateStorage
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,6 +80,61 @@ async def _async_reboot_required(hass: HomeAssistant) -> bool:
     return False
 
 
+def is_self_update_entity(hass: HomeAssistant, entity_id: str, entry: er.RegistryEntry | None) -> bool:
+    """True if this HACS update entity updates AUM itself.
+
+    HACS sets the update entity's unique_id to the numeric GitHub repository
+    id (e.g. "522634019"), not "owner/repo" — so the repo name has to be
+    looked up in HACS's own repository store. The unique_id substring check
+    is kept as a fallback for HACS versions that did use the full name.
+    """
+    uid = ((entry.unique_id if entry else "") or "").lower()
+    if FL_SELF_REPO_MARKER in uid:
+        return True
+    try:
+        hacs = hass.data.get("hacs")
+        repos = getattr(hacs, "repositories", None) if hacs is not None else None
+        if repos is not None and uid:
+            repo = repos.get_by_id(uid)
+            data = getattr(repo, "data", None) if repo is not None else None
+            full_name = (getattr(data, "full_name", "") or "").lower()
+            if FL_SELF_REPO_MARKER in full_name.replace("-", "").replace("_", ""):
+                return True
+            if getattr(data, "domain", None) == DOMAIN:
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    # HA 2026.11+ "marketplace" (built-in HACS): no HACS store in hass.data,
+    # but every repository gets a device named after the repo, e.g.
+    # "Advanced Update Manager" by "finbom".
+    try:
+        if entry is not None and entry.device_id:
+            from homeassistant.helpers import device_registry as dr  # noqa: PLC0415
+            device = dr.async_get(hass).async_get(entry.device_id)
+            if device is not None:
+                name = (device.name or "").lower().replace(" ", "").replace("-", "").replace("_", "")
+                if "advancedupdatemanager" in name:
+                    return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def hacs_update_kind(hass: HomeAssistant, entry: er.RegistryEntry | None) -> str | None:
+    """Repository category of a HACS/marketplace update ("integration",
+    "plugin", "theme", ...) from its device model, None if unknown. Only
+    integrations need a Home Assistant restart to take effect."""
+    try:
+        if entry is not None and entry.device_id:
+            from homeassistant.helpers import device_registry as dr  # noqa: PLC0415
+            device = dr.async_get(hass).async_get(entry.device_id)
+            if device is not None and device.model:
+                return str(device.model).lower()
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 class FeelingLuckyRunner:
     """Owns the single Feeling Lucky run for one config entry."""
 
@@ -85,6 +143,36 @@ class FeelingLuckyRunner:
         self.storage = storage
         self.enabled = enabled
         self._task: asyncio.Task | None = None
+        # Called with a copy of the final state whenever a run ends - either
+        # completed (opcon ok) or frozen (Code Red). Used by Autopilot to
+        # send its summary / restart HA; Feeling Lucky itself does not use it.
+        self._finish_listeners: list[Callable[[dict], Awaitable[None]]] = []
+
+    def add_finish_listener(self, listener: Callable[[dict], Awaitable[None]]) -> Callable[[], None]:
+        self._finish_listeners.append(listener)
+
+        def _remove() -> None:
+            if listener in self._finish_listeners:
+                self._finish_listeners.remove(listener)
+
+        return _remove
+
+    def async_cancel_for_shutdown(self) -> None:
+        """HA is stopping (typically mid-run because a Core/OS step restarts
+        it). The state was persisted before the current step, so cancelling
+        is safe — async_resume_if_needed() picks it up after the restart.
+        Without this, the task holds up HA's shutdown."""
+        if self._task is not None and not self._task.done():
+            self._task.cancel()
+
+    def is_running(self) -> bool:
+        return (self._task is not None and not self._task.done()) or (
+            self.storage.get_feeling_lucky_state().get("opcon") == FL_OPCON_RUNNING
+        )
+
+    def _fire_finished(self, state: dict) -> None:
+        for listener in list(self._finish_listeners):
+            self.hass.async_create_task(listener(dict(state)))
 
     # ---- Public API ----------------------------------------------------
 
@@ -92,8 +180,24 @@ class FeelingLuckyRunner:
         """OPCON critical blocks starting any new run."""
         return self.storage.get_feeling_lucky_state().get("opcon") == FL_OPCON_CRITICAL
 
-    async def async_start(self, entity_ids: list[str], take_backup: bool) -> None:
-        if not self.enabled:
+    async def async_start(
+        self,
+        entity_ids: list[str],
+        take_backup: bool,
+        *,
+        origin: str = "feeling_lucky",
+        include_self: bool = False,
+        prior_backup: str | None = None,
+    ) -> bool:
+        """Start a run. Returns True if it actually started.
+
+        origin/include_self/prior_backup exist for Autopilot: it bypasses the
+        Feeling Lucky feature flag (it has its own on/off switch), may include
+        AUM's own update as the very last HACS step, and takes its own
+        verified backup beforehand (prior_backup = that backup's name), so a
+        failed backup aborts the run without ever reaching Code Red.
+        """
+        if not self.enabled and origin != AP_ORIGIN:
             # Checked here, not just hidden in the frontend, so a direct
             # service call (Developer Tools, an automation) can't bypass the
             # default-off gate either — see CONF_ENABLE_FEELING_LUCKY.
@@ -101,43 +205,47 @@ class FeelingLuckyRunner:
                 "AUM Feeling Lucky: refused to start — the feature is disabled "
                 "in this integration's options (off by default)"
             )
-            return
+            return False
         if self.is_blocked():
             _LOGGER.warning(
                 "AUM Feeling Lucky: refused to start a new run — OPCON is Code Red, "
                 "reset it first"
             )
-            return
-        if self._task is not None and not self._task.done():
+            return False
+        if self.is_running():
             _LOGGER.warning("AUM Feeling Lucky: a run is already in progress, ignoring")
-            return
+            return False
 
-        steps = self._build_steps(entity_ids)
+        steps = self._build_steps(entity_ids, include_self=include_self)
         if not steps:
             _LOGGER.warning(
                 "AUM Feeling Lucky: none of the requested entities are eligible "
                 "pending updates, nothing to do"
             )
-            return
+            return False
 
         state = {
+            "origin": origin,
             "opcon": FL_OPCON_RUNNING,
             "last_error": None,
             "since": _now_iso(),
-            "backup_taken": None,
+            "backup_taken": True if prior_backup else None,
             "queue": {
                 "steps": steps,
                 "current_item": None,
                 "started_at": _now_iso(),
             },
         }
+        if prior_backup:
+            state["backup_name"] = prior_backup
         await self.storage.async_save_feeling_lucky_state(state)
 
         if take_backup:
             if not await self._async_take_backup(state):
-                return  # already frozen to Code Red inside _async_take_backup
+                return True  # started, but already frozen to Code Red
 
         self._task = self.hass.async_create_task(self._async_run(state))
+        return True
 
     async def async_resume_if_needed(self) -> None:
         """Call on `homeassistant_started`. Picks a run back up if HA died
@@ -158,7 +266,7 @@ class FeelingLuckyRunner:
 
     # ---- Internals -------------------------------------------------------
 
-    def _build_steps(self, entity_ids: list[str]) -> list[dict]:
+    def _build_steps(self, entity_ids: list[str], include_self: bool = False) -> list[dict]:
         registry = er.async_get(self.hass)
         coordinator = self.hass.data[DOMAIN]["coordinator"]
         by_id = {u["entity_id"]: u for u in (coordinator.data or [])}
@@ -173,11 +281,13 @@ class FeelingLuckyRunner:
             if not phase:
                 continue  # UPDATE_TYPE_OTHER isn't part of any Feeling Lucky phase
 
+            is_self = False
             if phase == "hacs":
                 entry = registry.async_get(entity_id)
-                uid = (entry.unique_id if entry else "") or ""
-                if FL_SELF_REPO_MARKER in uid.lower():
-                    continue  # never let the queue update the code running it
+                if is_self_update_entity(self.hass, entity_id, entry):
+                    if not include_self:
+                        continue  # never let the queue update the code running it
+                    is_self = True
 
             steps.append({
                 "entity_id": entity_id,
@@ -185,23 +295,28 @@ class FeelingLuckyRunner:
                 "phase": phase,
                 "status": FL_STEP_PENDING,
                 "error": None,
+                "is_self": is_self,
             })
 
+        # Stable sort by phase; AUM itself (Autopilot only) goes last in HACS
+        # so nothing else in that phase runs after its code was swapped out.
         order = {phase: i for i, phase in enumerate(FL_PHASE_ORDER)}
-        steps.sort(key=lambda s: order.get(s["phase"], len(FL_PHASE_ORDER)))
+        steps.sort(key=lambda s: (order.get(s["phase"], len(FL_PHASE_ORDER)), s.get("is_self", False)))
         return steps
 
     async def _async_take_backup(self, state: dict) -> bool:
-        try:
-            if self.hass.services.has_service("backup", "create"):
-                await self.hass.services.async_call("backup", "create", {}, blocking=True)
-            state["backup_taken"] = True
-            await self.storage.async_save_feeling_lucky_state(state)
-            return True
-        except Exception as err:  # noqa: BLE001
+        # Verified backup: picks the backup service that exists on this
+        # install (HAOS has no backup.create) and only succeeds once a new
+        # backup is actually there. "Make my day" must never run unprotected.
+        ok, info = await async_create_verified_backup(self.hass)
+        if not ok:
             state["backup_taken"] = False
-            await self._async_freeze(state, f"Backup failed before the run could start: {err}")
+            await self._async_freeze(state, f"Backup failed before the run could start: {info}")
             return False
+        state["backup_taken"] = True
+        state["backup_name"] = info
+        await self.storage.async_save_feeling_lucky_state(state)
+        return True
 
     async def _async_run(self, state: dict, resuming: bool = False) -> None:
         steps = state["queue"]["steps"]
@@ -242,6 +357,7 @@ class FeelingLuckyRunner:
         state["queue"]["current_item"] = None
         await self.storage.async_save_feeling_lucky_state(state)
         _LOGGER.info("AUM Feeling Lucky: run completed successfully")
+        self._fire_finished(state)
 
     def _get_installed_version(self, entity_id: str) -> str | None:
         entity_state = self.hass.states.get(entity_id)
@@ -382,6 +498,7 @@ class FeelingLuckyRunner:
         state["queue"]["current_item"] = None
         await self.storage.async_save_feeling_lucky_state(state)
         _LOGGER.error("AUM Feeling Lucky: Code Red — %s", error)
+        self._fire_finished(state)
 
         from homeassistant.helpers import issue_registry as ir  # noqa: PLC0415
         ir.async_create_issue(

@@ -1,22 +1,28 @@
 """WebSocket API commands for Advanced Update Manager."""
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
+
 import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .const import (
+    HACS_PLATFORMS,
     BACKUP_TYPE_FULL, BACKUP_TYPE_ADDON_ONLY, CONF_DEFAULT_BACKUP_TYPE,
     CONF_ENABLE_FEELING_LUCKY, CONF_HISTORY_KEEP_DAYS, DOMAIN,
     CORE_ENTITY_ID, HAOS_ENTITY_ID, HISTORY_KEEP_DAYS_DEFAULT, SUPERVISOR_ENTITY_ID,
     UPDATE_TYPE_ADDON, UPDATE_TYPE_CORE, UPDATE_TYPE_DEVICE,
     UPDATE_TYPE_HACS, UPDATE_TYPE_HAOS, UPDATE_TYPE_OTHER, UPDATE_TYPE_SUPERVISOR,
 )
+from .backup_helper import async_create_verified_backup
 from .feeling_lucky import _async_reboot_required
 
 _LOGGER = logging.getLogger(__name__)
+_VERSION = json.loads((Path(__file__).parent / "manifest.json").read_text(encoding="utf-8"))["version"]
 
 
 def _classify_entity(entity_id: str, entry: er.RegistryEntry | None) -> str:
@@ -27,7 +33,7 @@ def _classify_entity(entity_id: str, entry: er.RegistryEntry | None) -> str:
     if entity_id == SUPERVISOR_ENTITY_ID:
         return UPDATE_TYPE_SUPERVISOR
     if entry:
-        if entry.platform == "hacs":
+        if entry.platform in HACS_PLATFORMS:
             return UPDATE_TYPE_HACS
         if entry.platform == "hassio":
             return UPDATE_TYPE_ADDON
@@ -47,6 +53,113 @@ def async_setup(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_installed)
     websocket_api.async_register_command(hass, ws_get_history)
     websocket_api.async_register_command(hass, ws_get_feeling_lucky_status)
+    websocket_api.async_register_command(hass, ws_get_autopilot)
+    websocket_api.async_register_command(hass, ws_save_autopilot)
+    websocket_api.async_register_command(hass, ws_autopilot_run_now)
+    websocket_api.async_register_command(hass, ws_autopilot_skip_next)
+    websocket_api.async_register_command(hass, ws_autopilot_preview)
+    websocket_api.async_register_command(hass, ws_autopilot_test_notify)
+
+
+# ── Autopilot ─────────────────────────────────────────────────────────────
+
+def _autopilot(hass: HomeAssistant):
+    return (hass.data.get(DOMAIN) or {}).get("autopilot")
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/get_autopilot",
+})
+@websocket_api.async_response
+async def ws_get_autopilot(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Everything the Autopilot tab needs in one round trip."""
+    autopilot = _autopilot(hass)
+    if autopilot is None:
+        connection.send_error(msg["id"], "not_loaded", "Autopilot is not loaded")
+        return
+    connection.send_result(msg["id"], {
+        **autopilot.snapshot(),
+        "components": autopilot.list_components(),
+        "available_targets": autopilot.available_targets(),
+    })
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/save_autopilot",
+    vol.Required("config"): dict,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_save_autopilot(hass: HomeAssistant, connection, msg: dict) -> None:
+    from .autopilot import sanitize_config  # noqa: PLC0415
+
+    autopilot = _autopilot(hass)
+    if autopilot is None:
+        connection.send_error(msg["id"], "not_loaded", "Autopilot is not loaded")
+        return
+    await autopilot.async_save_config(sanitize_config(msg["config"]))
+    connection.send_result(msg["id"], {**autopilot.snapshot(), "components": autopilot.list_components(),
+                                       "available_targets": autopilot.available_targets()})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/autopilot_preview",
+    vol.Required("config"): dict,
+})
+@websocket_api.async_response
+async def ws_autopilot_preview(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Evaluate unsaved settings (nothing is stored) for the live preview."""
+    from .autopilot import sanitize_config  # noqa: PLC0415
+
+    autopilot = _autopilot(hass)
+    if autopilot is None:
+        connection.send_error(msg["id"], "not_loaded", "Autopilot is not loaded")
+        return
+    connection.send_result(msg["id"], {"evaluation": autopilot.evaluate(sanitize_config(msg["config"]))})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/autopilot_test_notify",
+    vol.Required("targets"): [str],
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_autopilot_test_notify(hass: HomeAssistant, connection, msg: dict) -> None:
+    """Send a test notification to the given (possibly unsaved) targets."""
+    autopilot = _autopilot(hass)
+    if autopilot is None:
+        connection.send_error(msg["id"], "not_loaded", "Autopilot is not loaded")
+        return
+    connection.send_result(msg["id"], {"results": await autopilot.async_send_test(msg["targets"])})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/autopilot_run_now",
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_autopilot_run_now(hass: HomeAssistant, connection, msg: dict) -> None:
+    autopilot = _autopilot(hass)
+    if autopilot is None:
+        connection.send_error(msg["id"], "not_loaded", "Autopilot is not loaded")
+        return
+    hass.async_create_task(autopilot.async_run(trigger="manual"))
+    connection.send_result(msg["id"], {"started": True})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): f"{DOMAIN}/autopilot_skip_next",
+    vol.Optional("skip", default=True): bool,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_autopilot_skip_next(hass: HomeAssistant, connection, msg: dict) -> None:
+    autopilot = _autopilot(hass)
+    if autopilot is None:
+        connection.send_error(msg["id"], "not_loaded", "Autopilot is not loaded")
+        return
+    await autopilot.async_set_skip_next(msg["skip"])
+    connection.send_result(msg["id"], {"skip_next": msg["skip"]})
 
 
 @websocket_api.websocket_command({
@@ -73,18 +186,30 @@ async def ws_install_update(hass: HomeAssistant, connection, msg: dict) -> None:
     backup_type = msg.get("backup_type", BACKUP_TYPE_FULL)
     entity_id = msg["entity_id"]
 
-    if backup and backup_type == BACKUP_TYPE_FULL:
-        async def _full_backup_then_install() -> None:
-            if hass.services.has_service("backup", "create"):
-                await hass.services.async_call("backup", "create", {}, blocking=True)
-            await hass.services.async_call(
-                "update",
-                "install",
-                {"entity_id": entity_id, "backup": False},
-                blocking=False,
-            )
+    # The per-app (partial) backup only exists for apps/add-ons. For anything
+    # else, fall back to a full backup rather than an entity backup that the
+    # update entity may not support (HACS) or that isn't what was promised.
+    if backup and backup_type == BACKUP_TYPE_ADDON_ONLY:
+        entry = er.async_get(hass).async_get(entity_id)
+        if _classify_entity(entity_id, entry) != UPDATE_TYPE_ADDON:
+            backup_type = BACKUP_TYPE_FULL
 
-        hass.async_create_task(_full_backup_then_install())
+    if backup and backup_type == BACKUP_TYPE_FULL:
+        # Wait for a verified backup before installing anything. On HAOS the
+        # old `backup.create` call silently did nothing (that service only
+        # exists without Supervisor), so updates ran with no backup at all.
+        ok, info = await async_create_verified_backup(hass)
+        if not ok:
+            _LOGGER.error("AUM: backup failed, %s was NOT updated: %s", entity_id, info)
+            connection.send_error(msg["id"], "backup_failed", info)
+            return
+        _LOGGER.info("AUM: backup %s created, installing %s", info, entity_id)
+        await hass.services.async_call(
+            "update",
+            "install",
+            {"entity_id": entity_id, "backup": False},
+            blocking=False,
+        )
     else:
         await hass.services.async_call(
             "update",
@@ -117,6 +242,7 @@ async def ws_get_config(hass: HomeAssistant, connection, msg: dict) -> None:
         "history_keep_days": history_keep_days,
         "feeling_lucky_enabled": feeling_lucky_enabled,
         "storage_size_bytes": storage_size_bytes,
+        "version": _VERSION,
     })
 
 
@@ -222,8 +348,8 @@ async def ws_get_restart_info(hass: HomeAssistant, connection, msg: dict) -> Non
                     issue.domain, issue.issue_id, issue.dismissed_version,
                 )
                 if (
-                    issue.domain == "hacs"
-                    and issue.issue_id.startswith("restart_required")
+                    issue.domain in HACS_PLATFORMS  # "marketplace" on HA 2026.11+
+                    and "restart" in issue.issue_id
                     and issue.dismissed_version is None
                 ):
                     _LOGGER.debug("AUM restart: active repair issue found: %s/%s", issue.domain, issue.issue_id)

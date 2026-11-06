@@ -1,4 +1,4 @@
-"""Button platform for Advanced Update Manager — Reset OPCON.
+"""Button platform for Advanced Update Manager — Reset OPCON + Autopilot.
 
 The only way OPCON goes from Code Red back to ok (no implicit reset via
 starting a new run — see feeling_lucky.py). Lands in its own "Controls"
@@ -21,7 +21,11 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    async_add_entities([ResetOpconButton(entry.entry_id)])
+    async_add_entities([
+        ResetOpconButton(entry.entry_id),
+        AutopilotRunNowButton(entry.entry_id),
+        AutopilotSkipNextButton(entry.entry_id),
+    ])
 
 
 class ResetOpconButton(ButtonEntity):
@@ -45,3 +49,42 @@ class ResetOpconButton(ButtonEntity):
     async def async_press(self) -> None:
         runner: FeelingLuckyRunner = self.hass.data[DOMAIN]["feeling_lucky_runner"]
         await runner.async_reset_opcon()
+
+
+class _AutopilotButton(ButtonEntity):
+    _attr_has_entity_name = True
+
+    def __init__(self, entry_id: str, key: str) -> None:
+        self._attr_unique_id = f"{entry_id}_{key}"
+        self._entry_id = entry_id
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name="Advanced Update Manager",
+            manufacturer="Magnus Finbom",
+            entry_type=DeviceEntryType.SERVICE,
+        )
+
+
+class AutopilotRunNowButton(_AutopilotButton):
+    _attr_name = "Autopilot Run Now"
+    _attr_icon = "mdi:airplane-takeoff"
+
+    def __init__(self, entry_id: str) -> None:
+        super().__init__(entry_id, "autopilot_run_now")
+
+    async def async_press(self) -> None:
+        self.hass.async_create_task(self.hass.data[DOMAIN]["autopilot"].async_run(trigger="manual"))
+
+
+class AutopilotSkipNextButton(_AutopilotButton):
+    _attr_name = "Autopilot Skip Next Run"
+    _attr_icon = "mdi:debug-step-over"
+
+    def __init__(self, entry_id: str) -> None:
+        super().__init__(entry_id, "autopilot_skip_next")
+
+    async def async_press(self) -> None:
+        await self.hass.data[DOMAIN]["autopilot"].async_set_skip_next(True)
