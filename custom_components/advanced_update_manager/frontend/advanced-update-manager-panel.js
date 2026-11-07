@@ -142,7 +142,17 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   }
 
   _tr(key, fallback = key) {
-    return this._t[key] ?? fallback;
+    const s = this._t[key] ?? fallback;
+    return this._isMarketplace() && typeof s === "string" ? s.replace(/\bHACS\b/g, "Marketplace") : s;
+  }
+
+  // HA 2026.11 ships HACS built in as "Marketplace". Show the name the user
+  // sees in their own Home Assistant: Marketplace from 2026.11, HACS before.
+  _isMarketplace() {
+    const m = /^(\d+)\.(\d+)/.exec(this._hass?.config?.version || "");
+    if (!m) return false;
+    const [y, mo] = [parseInt(m[1], 10), parseInt(m[2], 10)];
+    return y > 2026 || (y === 2026 && mo >= 11);
   }
 
   async _fetchUpdates() {
@@ -558,7 +568,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
   }
 
   _typeLabel(type) {
-    return { supervisor: "Supervisor", core: "Core", haos: "HA OS", addon: "Apps", hacs: "HACS", device: "Device", other: "Other" }[type] || type;
+    return { supervisor: "Supervisor", core: "Core", haos: "HA OS", addon: "Apps", hacs: this._isMarketplace() ? "Marketplace" : "HACS", device: "Device", other: "Other" }[type] || type;
   }
 
   _typeColor(type) {
@@ -1058,7 +1068,7 @@ class AdvancedUpdateManagerPanel extends HTMLElement {
     const blockedTitle = blocked ? this._tr("fl_blocked_tooltip", "OPCON is Code Red — reset it first") : "";
     const infoBody = this._flInfoCollapsed ? "" : `
       <div class="fl-info-body">
-        <p class="fl-order">Supervisor → HACS → Add-ons → ${this._tr("fl_device_firmware", "Device firmware")} → OS → Core</p>
+        <p class="fl-order">Supervisor → ${this._typeLabel("hacs")} → Add-ons → ${this._tr("fl_device_firmware", "Device firmware")} → OS → Core</p>
         <p class="fl-info-hint">${this._tr(
           "fl_info_hint",
           "Supervisor always goes first — the platform itself requires it. Everything else runs lowest-risk first, saving the restart-heavy OS and Core updates for last, once HACS/add-ons/firmware are already confirmed healthy. Device firmware is excluded by default below — check it in manually if you want it included."
@@ -1546,7 +1556,7 @@ actions:
             <input class="search-input ap-search" data-type="${type}" placeholder="${this._tr("ap_search", "Search…")}" value="${this._escHtml(this._apFilter[type] || "")}" oninput="this.getRootNode().host._apSetFilter('${type}', this.value)">
             <span class="search-count">${selected.size} ${mode === "all_except" ? this._tr("ap_count_excluded", "excluded") : this._tr("ap_count_selected", "selected")} · ${comps.length} ${this._tr("ap_count_installed", "installed")}</span>
           </div>
-          <div class="ap-comp-list">${rows || `<div class="ap-muted">${this._tr("ap_no_components", "Nothing installed of this type.")}</div>`}</div>
+          <div class="ap-comp-list" data-scroll="ap-comp-${type}">${rows || `<div class="ap-muted">${this._tr("ap_no_components", "Nothing installed of this type.")}</div>`}</div>
         </div>`;
     }
 
@@ -1782,6 +1792,12 @@ actions:
     const active = this.shadowRoot.activeElement;
     const focusKey = active?.dataset?.focus || null;
     const caret = focusKey ? active.selectionStart : null;
+    // Inner scroll boxes (e.g. the Autopilot app/HACS pick lists) would jump
+    // back to the top on every re-render — remember where they were.
+    const scrolls = {};
+    this.shadowRoot.querySelectorAll("[data-scroll]").forEach((el) => {
+      scrolls[el.dataset.scroll] = el.scrollTop;
+    });
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; padding: 16px; font-family: var(--paper-font-body1_-_font-family, sans-serif); }
@@ -2049,6 +2065,10 @@ actions:
       ${this._renderConfirmModal()}
       ${this._renderFlConfirmModal()}
     `;
+    for (const [key, top] of Object.entries(scrolls)) {
+      const el = this.shadowRoot.querySelector(`[data-scroll="${key}"]`);
+      if (el) el.scrollTop = top;
+    }
     // Full innerHTML re-render destroys the focused field — put focus and
     // caret back on the Autopilot input the user was typing in.
     if (focusKey) {

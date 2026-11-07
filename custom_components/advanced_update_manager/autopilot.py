@@ -21,6 +21,7 @@ import copy
 import logging
 from datetime import date, datetime, time, timedelta
 
+from homeassistant.const import MAJOR_VERSION, MINOR_VERSION
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
@@ -742,7 +743,12 @@ class AutopilotManager:
 
     def _t(self) -> dict:
         lang = (self.hass.config.language or "en").split("-")[0]
-        return _TEXT.get(lang, _TEXT["en"])
+        text = _TEXT.get(lang, _TEXT["en"])
+        # HA 2026.11 ships HACS built in as "Marketplace" — use the name the
+        # user actually sees in their Home Assistant.
+        if (MAJOR_VERSION, MINOR_VERSION) >= (2026, 11):
+            text = {k: v.replace("HACS", "Marketplace") for k, v in text.items()}
+        return text
 
     @staticmethod
     def _bullet(items: list[str]) -> str:

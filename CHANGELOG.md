@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1] - 2026-11-07
+### Fixed
+- **Autopilot: the app / HACS pick list jumped back to the top** every time you ticked an item under "What to install" (All except… / Only selected). The list now keeps its scroll position.
+
+### Changed
+- On **Home Assistant 2026.11 and later**, HACS is shown as **Marketplace** throughout the panel and in Autopilot notifications, matching the name Home Assistant itself now uses. Older versions still show HACS. Settings and internal names are unchanged.
+
 ## [1.6.0] - 2026-11-06
 ### Added
 - **✈️ Autopilot** — scheduled, unattended updates of Core, apps (add-ons) and HACS, in its own panel tab. Choose the time and weekdays; per type **Off / All / All except… / Only selected**; wait at least N days after release (default 7, 0–360); major versions opt-in (off, not recommended). Every run starts with a **verified full backup** (no backup → nothing installed, "Autopilot disengaged", retried at the next run), installs HACS → apps → Core using the Feeling Lucky engine, survives the Core restart and restarts Home Assistant when HACS integrations need it. **Off by default.**
